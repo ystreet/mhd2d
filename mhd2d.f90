@@ -43,7 +43,7 @@
     real(DBL), allocatable, dimension(:,:) :: XArr, YArr
     real(DBL), allocatable, dimension(:,:) :: g11_con, g13_con, g22_con, g33_con
     real(DBL), allocatable, dimension(:,:) :: g11_cov, g13_cov, g22_cov, g33_cov
-    real(DBL), allocatable, dimension(:,:) :: Jacb, rho_a, Va
+    real(DBL), allocatable, dimension(:,:) :: Jacb, rho_a
     real(DBL), allocatable, dimension(:,:) :: h_nu, h_ph, h_mu
     complex(8), allocatable, dimension(:) :: odds, evens
 
@@ -65,7 +65,7 @@
 ! Courant condition arrays
     real(DBL), allocatable, dimension(:,:) :: Delta_T_CF, Delta_T_FA, &
                                               Delta_L_CF, Delta_L_FA
-    real(DBL), allocatable, dimension(:) :: F_Len, D_out, Out_DL, &
+    real(DBL), allocatable, dimension(:) :: D_out, Out_DL, &
                                             FLR_Per
     real(DBL) :: Av_Va, Delta_x, Delta_y, Bnd_L, Length, Courant_cond, &
                  Freq, Eperp
@@ -134,7 +134,7 @@
     allocate (h_ph(Num_u1,Num_u3) )
     allocate (h_mu(Num_u1,Num_u3) )
 
-    allocate (rho_a(Num_U1,Num_u3), Va(Num_u1,Num_u3) )
+    allocate (rho_a(Num_U1,Num_u3) )
 
 ! Call grid generation routine
     print*,'Generating grid...'
@@ -189,7 +189,7 @@
     enddo
     close(unit=10)
 
-    print*,'Calculating Va...'
+    print*,'Calculating VSa...'
     do ii=1,Num_u1                   ! chooses which field line
       xd = LVArr(ii)
       lat = 0.0d0                    ! set to equator
@@ -282,10 +282,10 @@
       B3y_ord(ii,jj) = Yarr(2*ii   ,2*jj-1)
       E1y_ord(ii,jj) = Yarr(2*ii   ,2*jj-1)
       E2y_ord(ii,jj) = Yarr(2*ii-1 ,2*jj-1)
-      write(11,'(2(i4,1X),10(f10.3,1X))') ii,jj, B1x_ord(ii,jj), B2x_ord(ii,jj), B3x_ord(ii,jj), E1x_ord(ii,jj), E2x_ord(ii,jj), B1y_ord(ii,jj), B2y_ord(ii,jj), B3y_ord(ii,jj), E1y_ord(ii,jj), E2y_ord(ii,jj)
+!      write(11,'(2(i4,1X),10(f10.3,1X))') ii,jj, B1x_ord(ii,jj), B2x_ord(ii,jj), B3x_ord(ii,jj), E1x_ord(ii,jj), E2x_ord(ii,jj), B1y_ord(ii,jj), B2y_ord(ii,jj), B3y_ord(ii,jj), E1y_ord(ii,jj), E2y_ord(ii,jj)
     enddo
   enddo 
-! #### CHECK THIS
+! CHECKED
 !   Addition Half cell in u1 direction
   do ii = 1,Num_u1_2
     E1x_ord(ii,Num_u3_2) = Xarr(2*ii  ,Num_u3)
@@ -295,34 +295,38 @@
     E1y_ord(ii,Num_u3_2) = Yarr(2*ii  ,Num_u3)
     E2y_ord(ii,Num_u3_2) = Yarr(2*ii-1,Num_u3)
     B3y_ord(ii,Num_u3_2) = Yarr(2*ii  ,Num_u3)
-    write(11,'(i4,1X,6(f10.3,1X))') ii,jj, E1x_ord(ii,Num_u3_2), E2x_ord(ii,Num_u3_2), B3x_ord(ii,Num_u3_2), E1y_ord(ii,Num_u3_2), E2y_ord(ii,Num_u3_2), B3y_ord(ii,Num_u3_2)
+
+!    write(11,'(i4,1X,6(f10.3,1X))') ii, E1x_ord(ii,Num_u3_2), E2x_ord(ii,Num_u3_2), B3x_ord(ii,Num_u3_2), E1y_ord(ii,Num_u3_2), E2y_ord(ii,Num_u3_2), B3y_ord(ii,Num_u3_2)
   enddo 
 
 ! Calc Va^2 used in time iteration which is time invariant over the full grid
   allocate (V2(Num_u1, Num_u3))
+! CHECKED
   do ii=1,Num_u1
     do jj=1,Num_u3
-      Eperp  = eps0*(1.0 + c**2/Va(ii,jj)**2)   ! in SI units
-      V2(ii,jj) = 1.0/(mu0*Eperp)  ! Va^2 in SI
-!      Sa(ii,jj)       = 1.0/(u0*Va(ii,jj))
+      Eperp  = eps0_s*(1.0 + c_s**2/Va_a(ii,jj)**2)   ! in SI units
+      V2(ii,jj) = 1.0/(mu0_s*Eperp)  ! Va^2 in SI
+!      write(11,'(2(i4,1X),f10.6,1X,2E14.6)') ii, jj, V2(ii,jj), Eperp, Va_a(ii, jj)
+!      Sa(ii,jj)       = 1.0/(u0*Va_a(ii,jj))
     enddo
   enddo
+
 !
 ! Calculate Info about run
 !
   Bnd_L   = 0.0
   allocate (Delta_L_FA(Num_u1,Num_u3))
   allocate (Delta_T_FA(Num_u1,Num_u3))
-  allocate (F_Len(Num_u1))
+!  allocate (F_Len(Num_u1))
   allocate(FLR_Per(Num_u1))
 
   do ii = 1, Num_u1
     do jj = 2, Num_u3-1
       Delta_x = (xArr(ii,jj+1) - xArr(ii,jj-1))           !     Change in X coordinate along field line
       Delta_y = (yArr(ii,jj+1) - yArr(ii,jj-1))           !     Change in Y coordinate along field line
-      Delta_L_FA(ii,jj)= sqrt(Delta_x**2 + Delta_y**2)/2. !     Line segment Length (in Re)
-      F_len(ii) = F_len(ii) + Delta_L_FA(ii,jj)
-      Av_Va =max(Va(ii,jj+1),Va(ii,jj-1))
+      Delta_L_FA(ii,jj)= sqrt(Delta_x**2 + Delta_y**2)    !     Line segment Length (in Re)
+!      F_len(ii) = F_len(ii) + Delta_L_FA(ii,jj)
+      Av_Va =max(Va_a(ii,jj+1),Va_a(ii,jj-1))
       Delta_T_FA(ii,jj)= Delta_L_FA(ii,jj)/Av_Va        !    Transit time across Delta_L segment
       FLR_Per(ii) = FLR_Per(ii) + Delta_T_FA(ii,jj)     !    Transit time along field line
     enddo
@@ -333,8 +337,10 @@
   Delta_L_FA(:,1) = Maxval(Delta_L_FA)
   Delta_T_FA(:,1) = Maxval(Delta_T_FA)
 
+!  print*,Maxval(Delta_L_FA),Maxval(Delta_T_FA)
+
   allocate (Delta_L_CF(Num_u1,Num_u3))
-  allocate (Delta_T_CF(ii,jj))
+  allocate (Delta_T_CF(Num_u1,Num_u3))
 
   do ii = 2, Num_u1-1
     do jj = 1, Num_u3
@@ -342,8 +348,8 @@
       Delta_x = (xArr(ii+1,jj) - xArr(ii-1,jj))   !  Change in X coordinate along field line
       Delta_y = (yArr(ii+1,jj) - yArr(ii-1,jj))   !  Change in Y coordinate along field line
       Length = sqrt(Delta_x**2 + Delta_y**2)      !  Line segment Length (in Re)
-      Av_Va = (Va(ii+1,jj) + Va(ii-1,jj))/2       !  Average Alfven Speed across Delta_L segment (in m/s)
-      Av_Va =Max(Va(ii+1,jj),Va(ii-1,jj))
+!      Av_Va = (Va_a(ii+1,jj) + Va_a(ii-1,jj))/2
+      Av_Va =Max(Va_a(ii+1,jj),Va_a(ii-1,jj))             !  Average Alfven Speed across Delta_L segment (in m/s)
       Delta_L_CF(ii,jj)= Length                           !  Transit time across Delta_L segment
       Delta_T_CF(ii,jj)= Delta_L_CF(ii,jj)/Av_Va          !  Transit time across Delta_L segment
     enddo
@@ -354,13 +360,20 @@
   Delta_L_CF(1,:) = Maxval(Delta_L_CF)
   Delta_T_CF(1,:) = Maxval(Delta_T_CF)
 
-  Courant_cond = min(Minval(Delta_T_FA),Minval(Delta_T_CF))
+  print*,Minval(Delta_T_FA),Minval(Delta_T_CF)
+
+  Courant_cond = min(Minval(Delta_T_FA),Minval(Delta_T_CF))/2
   print*,'Courant cond = ',courant_cond
+
+  if (dt.GT.Courant_cond) then
+    print*,"WARNING: Courant condition problem. Try reducing 'dt'"
+    stop
+  endif
 
   deallocate(Delta_T_CF)
   deallocate(Delta_L_CF)
   deallocate(FLR_Per)
-  deallocate(F_Len)
+!  deallocate(F_Len)
   deallocate(Delta_T_FA)
   deallocate(Delta_L_FA)
 
@@ -446,7 +459,7 @@ stop
 !
 !call getID(IDsave)	! save the density, Alfven velocity, transit times.
 !      open(IDsave,file=trim(BEdata)//'density.dat',form='binary')
-!      write(IDsave) N1,N3,xArr,yArr,rho_a,Va,Delta_T_CF,Delta_T_FA
+!      write(IDsave) N1,N3,xArr,yArr,rho_a,Va_a,Delta_T_CF,Delta_T_FA
 !      close(IDsave)
 !!	print*,maxval(rho_a),minval(rho_a)
 !
@@ -610,8 +623,8 @@ stop
 ! Env     = exp(-((time-2.5/Width)*Width)**2.)
 ! Tdep    = Carr*Env
 !
-!**E1_outer=-B2_cov(:,N3)*Va(:,N3)*evens +D_Tdr*Tdep*evens*Amp        ! Allow outward travelling waves ?
-!**E2_outer= B1_cov(:,N3)*Va(:,N3)*odds+m_num*Tdr*Tdep*odds*Amp   ! Allow outward travelling waves ?
+!**E1_outer=-B2_cov(:,N3)*Va_a(:,N3)*evens +D_Tdr*Tdep*evens*Amp        ! Allow outward travelling waves ?
+!**E2_outer= B1_cov(:,N3)*Va_a(:,N3)*odds+m_num*Tdr*Tdep*odds*Amp   ! Allow outward travelling waves ?
 !
 !!   Conducting Northern Ionosphere
 !!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -962,14 +975,14 @@ stop
 !
 ! !FilenameI = Plot_dir+Ionofile
 ! !Save,Filename=FilenameI,T_count,Dt,Plot_freq,N1,Colat_N,LVArr,flr_a,Sd_N,Sp_N,Sh_N,$
-! !                       BB1_n,BB2_n,BB3_n,BB3_s,EE1_n,EE2_n,JJ1_n,JJ2_n,Va
+! !                       BB1_n,BB2_n,BB3_n,BB3_s,EE1_n,EE2_n,JJ1_n,JJ2_n,Va_a
 !
 ! !FilenameG = Plot_dir+gnd_file
 ! !Save,Filename=FilenameG,T_count,Dt,Plot_freq,N1,Colat_N,LVArr,flr_a,$
 ! !                       BB1_n_gnd,BB2_n_gnd
 !
 ! !FilenameP = Plot_dir+Data_file
-! !Save,Filename=FilenameP,T_count,Dt,Plot_freq,N1,N3,Colat_N,LVArr,Va,m_num,del_Th_0_1,$
+! !Save,Filename=FilenameP,T_count,Dt,Plot_freq,N1,N3,Colat_N,LVArr,Va_a,m_num,del_Th_0_1,$
 ! !                 Nt,Dt,Freq,Re,Dstop,Amp,T_ramp,LMin_1,LMax_1,$
 ! !                 g11_con,g11_cov,g22_con,g22_cov,g13_con,g13_cov,g33_con,g33_cov,$
 ! !                 h_mu,h_nu,h_ph,Sd_N,Sp_N,Sh_N,$
