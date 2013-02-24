@@ -25,7 +25,7 @@
 
     implicit none
 
-    integer ::  ii, jj
+    integer ::  ii, jj, kk
     integer ::  Num_u1, Num_u1_2, Num_u3, Num_u3_2, K
     integer(8) :: nt
 
@@ -71,8 +71,13 @@
                  Freq, Eperp
 
 ! Basis set arrays
-    real(DBL), allocatable, dimension(:,:) :: Ynm, Ynm_s
+    real(DBL), allocatable, dimension(:,:) :: Ynm, Ynm_s, Ynm_B3, Ynm_g, &
+                                              Ynm_B3_dr2, Ynm_B3_dr, AlphaB3
     real(DBL), allocatable, dimension(:) :: zeros
+
+! time loop variables
+    real(DBL) :: time
+    integer :: count1
 
 
 ! - - - - - - - - - start of code - - - - - - - - - - -
@@ -409,19 +414,21 @@
   allocate (Ynm_s(K,Num_u1))
   allocate (zeros(K))
 
-  print*,m_num, k, Num_u1, LMin_u1, LMax_u1
+
+!  CHECKED
+!  print*,m_num, k, Num_u1, LMin_u1, LMax_u1
   call do_basis(m_num, k, Num_u1, LMin_u1, LMax_u1, del_Th, Ynm, Ynm_s, zeros)
-  print*,del_Th
+!  print*,del_Th
 
-  do ii = 1, K
-    do jj = 1, Num_u1
-      write (11,'(2(i4,1X),2(E14.6,1X))') ii, jj, Ynm(ii,jj), Ynm_s(ii,jj)
-    enddo
-  enddo
+!  do ii = 1, K
+!    do jj = 1, Num_u1
+!      write (11,'(2(i4,1X),2(E14.6,1X))') ii, jj, Ynm(ii,jj), Ynm_s(ii,jj)
+!    enddo
+!  enddo
 
-  do ii = 1, K
-    write (12,'(i4,1X,E14.6)') ii, zeros(ii)
-  enddo
+!  do ii = 1, K
+!    write (12,'(i4,1X,E14.6)') ii, zeros(ii)
+!  enddo
 
 ! Ynm and Ynm_S are (k,N1) arrays where the Legendres are listed from HIGH to LOW Lat
 ! CoLat_N goes from LOW to HIGH Latitude i.e. HIGH to LOW CoLatitude
@@ -429,25 +436,33 @@
 !  Set up scale factors for the Ionospheric Boundary Conditions for the Spherical Harmonic Expansion
 !   Need to handle the alternating grid pattern on the ionopsheric boundary....
 
+  allocate(Ynm_B3(K,Num_u1), Ynm_g(K,Num_u1), Ynm_B3_dr(K,Num_u1), Ynm_B3_dr2(K,Num_u1/2))
+  allocate(AlphaB3(K,K))
 
-!  do kk = 1,K                    ! k = Number of Basis Functions in Expansion (from Sav file)
+  do kk = 1,K                    ! k = Number of Basis Functions in Expansion (from Sav file)
 ! B3 and B2 are on the same grid in u1
 ! South and North are the same
-!    do ii = 1,Num_u1
-!      Ynm_B3(kk,ii) = Ynm(kk,N1+1-ii)            ! Reverse order of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
-!      Ynm_B3_dr(kk,ii)=Ynm_S(kk,Num_u1+1-ii)
-!      Ynm_g(kk,ii)=Ynm(kk,Num_u1+1-ii)*(2.d0*zeros(kk)+1.d0)/(zeros(kk)+1.d0)
-!    enddo
-!    do ii = 1,Num_u1_2
-!      Ynm_B3_dr2(kk,ii) = Ynm_S(kk,Num_u1+1-(2*ii))  ! Reverse order and use 2nd value of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
+    do ii = 1,Num_u1
+      Ynm_B3(kk,ii) = Ynm(kk,Num_u1+1-ii)            ! Reverse order of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
+      Ynm_B3_dr(kk,ii)=Ynm_S(kk,Num_u1+1-ii)
+      Ynm_g(kk,ii)=Ynm(kk,Num_u1+1-ii)*(2.d0*zeros(kk)+1.d0)/(zeros(kk)+1.d0)
+    enddo
+    do ii = 1,Num_u1_2
+      Ynm_B3_dr2(kk,ii) = Ynm_S(kk,Num_u1+1-(2*ii))  ! Reverse order and use 2nd value of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
+    enddo
+  enddo
+
+!  AlphaB3_2=MatMul(Ynm_B3_dr2,Transpose(Ynm_B3_dr2))
+  AlphaB3  =MatMul(Ynm_B3_dr, transpose(Ynm_B3_dr))
+
+!  do ii = 1, K
+!    do jj = 1, K
+!      write(11,'(2(i4,1X),E14.6)') ii, jj, AlphaB3 (ii, jj)
 !    enddo
 !  enddo
 
-!  AlphaB3_2=MatMul(Ynm_B3_dr2,Transpose(Ynm_B3_dr2))
-!  AlphaB3  =MatMul(Ynm_B3_dr, transpose(Ynm_B3_dr))
-!
-!  count1 = 0
-!  time=0.d0
+  count1 = 0
+  time=0.d0
 
   stop
 
