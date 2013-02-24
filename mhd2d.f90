@@ -360,7 +360,7 @@
   Delta_L_CF(1,:) = Maxval(Delta_L_CF)
   Delta_T_CF(1,:) = Maxval(Delta_T_CF)
 
-  print*,Minval(Delta_T_FA),Minval(Delta_T_CF)
+!  print*,Minval(Delta_T_FA),Minval(Delta_T_CF)
 
   Courant_cond = min(Minval(Delta_T_FA),Minval(Delta_T_CF))/2
   print*,'Courant cond = ',courant_cond
@@ -377,42 +377,62 @@
   deallocate(Delta_T_FA)
   deallocate(Delta_L_FA)
 
-stop
 
-!  allocate (D_out(Num_u1))
-!  allocate (Out_DL(Num_u1-1))
-!  allocate (h_mu_outer(Num_u3))
-!
-!  Bnd_L   = 0.0
-!  D_out(1)   = 0.0
-!
-!  do ii = 1, Num_u1-1
-!    Delta_x = (xArr(ii+1,Num_u3) - xArr(ii,Num_u3))     ! Change in X coordinate along outer Boundary
-!    Delta_y = (yArr(ii+1,Num_u3) - yArr(ii,Num_u3))     ! Change in Y coordinate along outer Boundary
-!    Out_DL(ii) = sqrt(Delta_x**2 + Delta_y**2)
-!    D_out(ii+1) = D_out(ii) + Out_DL(ii)
+
+  allocate (D_out(Num_u1))
+  allocate (Out_DL(Num_u1-1))
+  allocate (h_mu_outer(Num_u3))
+
+  D_out   = 0.0
+
+  do ii = 1, Num_u3-1
+    Delta_x = (xArr(Num_u1,ii+1) - xArr(Num_u1,ii))     ! Change in X coordinate along outer Boundary
+    Delta_y = (yArr(Num_u1,ii+1) - yArr(Num_u1,ii))     ! Change in Y coordinate along outer Boundary
+    Out_DL(ii) = sqrt(Delta_x**2 + Delta_y**2)
+    D_out(ii+1) = D_out(ii) + Out_DL(ii)
+  enddo
+  Bnd_L = Sum(out_DL)                       ! Calculates length of outer boundary in Re
+
+!  print*,Bnd_L
+
+! CHECKED
+  do ii = 1,Num_u3_2+1
+    h_mu_outer(2*ii-1) = h_mu(Num_u1,2*ii-1)
+  enddo
+
+!  do ii = 1,Num_u3
+!    write (11,'(i4,1X,f8.3)') ii,h_mu_outer(ii)
 !  enddo
-!  Bnd_L = Sum(out_DL)                       ! Calculates length of outer boundary in Re
+
+! Calc basis functions, V and pV/pr
+  allocate (Ynm(K,Num_u1))
+  allocate (Ynm_s(K,Num_u1))
+  allocate (zeros(K))
+
+  print*,m_num, k, Num_u1, LMin_u1, LMax_u1
+  call do_basis(m_num, k, Num_u1, LMin_u1, LMax_u1, del_Th, Ynm, Ynm_s, zeros)
+  print*,del_Th
+
+  do ii = 1, K
+    do jj = 1, Num_u1
+      write (11,'(2(i4,1X),2(E14.6,1X))') ii, jj, Ynm(ii,jj), Ynm_s(ii,jj)
+    enddo
+  enddo
+
+  do ii = 1, K
+    write (12,'(i4,1X,E14.6)') ii, zeros(ii)
+  enddo
+
+! Ynm and Ynm_S are (k,N1) arrays where the Legendres are listed from HIGH to LOW Lat
+! CoLat_N goes from LOW to HIGH Latitude i.e. HIGH to LOW CoLatitude
 !
-!  do ii = 1,Num_u3_2+1
-!    h_mu_outer(2*ii-1) = h_mu(Num_u1,2*ii-1)
-!  enddo
-!
-!! Calc basis functions, V and pV/pr
-!  allocate (Ynm(K,Num_u1))
-!  allocate (Ynm_s(K,Num_u1))
-!  allocate (zeros(K))
-!  call do_basis(m_num, k, Num_u1, LMin_u1, LMax_u1, del_Th, Ynm, Ynm_s, zeros)
-!! Ynm and Ynm_S are (k,N1) arrays where the Legendres are listed from HIGH to LOW Lat
-!! CoLat_N goes from LOW to HIGH Latitude i.e. HIGH to LOW CoLatitude
-!!
-!!  Set up scale factors for the Ionospheric Boundary Conditions for the Spherical Harmonic Expansion
-!!   Need to handle the alternating grid pattern on the ionopsheric boundary....
-!
-!
-!!  do kk = 1,K                    ! k = Number of Basis Functions in Expansion (from Sav file)
-!! B3 and B2 are on the same grid in u1
-!! South and North are the same
+!  Set up scale factors for the Ionospheric Boundary Conditions for the Spherical Harmonic Expansion
+!   Need to handle the alternating grid pattern on the ionopsheric boundary....
+
+
+!  do kk = 1,K                    ! k = Number of Basis Functions in Expansion (from Sav file)
+! B3 and B2 are on the same grid in u1
+! South and North are the same
 !    do ii = 1,Num_u1
 !      Ynm_B3(kk,ii) = Ynm(kk,N1+1-ii)            ! Reverse order of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
 !      Ynm_B3_dr(kk,ii)=Ynm_S(kk,Num_u1+1-ii)
@@ -422,13 +442,15 @@ stop
 !      Ynm_B3_dr2(kk,ii) = Ynm_S(kk,Num_u1+1-(2*ii))  ! Reverse order and use 2nd value of Basis Vectors due to U1 direction (0 = low boundary N1-1 = upper boundary)
 !    enddo
 !  enddo
-!
+
 !  AlphaB3_2=MatMul(Ynm_B3_dr2,Transpose(Ynm_B3_dr2))
 !  AlphaB3  =MatMul(Ynm_B3_dr, transpose(Ynm_B3_dr))
 !
 !  count1 = 0
 !  time=0.d0
-!
+
+  stop
+
 !filename=trim(BEdata)//'coordinate.dat'
 !INQUIRE(FILE =filename, EXIST = exists)
 !!	print*,	filename, '',exists

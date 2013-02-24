@@ -107,9 +107,9 @@ module mhd2d_grid
     integer :: ii, na, nb, val_i
     real(DBL) :: val
 
-    if (N < 2) return
+    if (N < 2) return    ! only 1 value so no sort
 
-    if (N==2) then
+    if (N==2) then       ! 2 values to sort
       if (A(1) > A(2)) then
         val=A(1)
         val_i=Ai(1)
@@ -135,7 +135,7 @@ module mhd2d_grid
 !
 ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 !
-  subroutine do_basis(m_num, k, Num_u1, L_Min, L_Max, del_Th, Ynm, Ynm_s, zeros)
+  subroutine do_basis(m_num, k, Num_u1, L_Min, L_Max, dTh, Ynm, Ynm_s, zeros)
 ! Construct basis set of pV/pr for atmosphere solution
 ! M. D. Sciffer and C. L. Waters
 ! Centre for Space Physics
@@ -147,207 +147,174 @@ module mhd2d_grid
 
     use mhd2d_constants
 
+! Input variables
     integer, intent(in) :: k, Num_u1
-    real(DBL), intent(inout) :: del_Th
     real(DBL), intent(in) :: m_num, L_Min, L_Max
+    real(DBL), intent(inout) :: dTh
+! Outputs:
     real(DBL), dimension(k,Num_u1), intent(out) :: Ynm, Ynm_s
     real(DBL), dimension(k), intent(out) :: zeros
-
-    integer :: LowBC_switch, HighBC_switch, &
-             LDA, LDVR, LDVL, LDEVEC, LWORK, IHI, ILO, INFO
-    integer :: ii, kk, kk1, jj, Ipts
-    real(DBL) :: h, L, End1, End2, res, ABNRM, P0, Pn
+! Vars for rest of code
+    integer :: ii, jj, ipts, LowBC, HighBC
+    real(DBL) :: dTh2, dTh_sq, End1, End2, res, p0, Pn
     real(DBL) :: CLat_Min, CLat_Max, CosT, SinT
 
     real(DBL), dimension(Num_u1) :: x, Theta
     real(DBL), dimension(K,K) :: ortho_n
     real(DBL), dimension(K) :: RTerm_dr, RTerm
 
-    integer, allocatable :: iwork(:), Iperm(:)
-    real(DBL), allocatable :: Array(:,:), Array1(:,:)
-    real(DBL), allocatable :: EVAL(:), EVEC(:,:)
-    real(DBL), allocatable :: VL(:,:), VR(:,:)
-    real(DBL), allocatable :: Lp(:), Lm(:)  !, tempL(:)
-    real(DBL), allocatable :: Rconde(:), Rcondv(:), scale(:), &
-                            wi(:), wr(:), work(:)
+    integer, allocatable :: Iperm(:)
+    real(DBL), allocatable :: Array(:,:)
+    real(DBL), allocatable :: Lp(:)
 ! variable for sort routine
     real(DBL), dimension(:), allocatable :: T
     integer, dimension(:), allocatable :: Ti
-    integer :: i
+! Matrix eigen_solver variables
+    character :: jobVL='N', jobVR='V'
+    integer :: LWork, LDVL, info
+    real(DBL), allocatable :: VL(:,:), VR(:,:), &
+                              wR(:), wI(:), Work(:)
 
-    Ipts = Num_u1-2
-    LDA = Ipts
-    LDEVEC = Ipts
-    LDVL = Ipts
-    LDVR = Ipts
-    LWORK = (6+Ipts)*Ipts
-
-    do ii=1,Ipts
+    ipts = Num_u1-2
+    LDVL = 1
+    LWORK = 4*ipts
+! Index array for sort routine
+    allocate(Iperm(ipts))
+    do ii=1,ipts
       Iperm(ii)=ii
     enddo
 
-    CLat_Min=asin(sqrt(RI_s/L_Max))*RadToDeg       ! Min Co_Lat in degrees, specifies outer boundary
-    CLat_Max=asin(sqrt(RI_s/L_Min))*RadToDeg       ! Max Co_Lat in degrees for Nth Hemisphere (Min Latitude), specifies inner boundary
+    CLat_Min=asin(sqrt(rI_s/L_Max))*RadToDeg       ! Min Co_Lat in degrees, specifies outer boundary
+    CLat_Max=asin(sqrt(rI_s/L_Min))*RadToDeg       ! Max Co_Lat in degrees for Nth Hemisphere (Min Latitude), specifies inner boundary
 
-    del_Th=(CLat_Max-CLat_Min)/(Num_u1-1.d0)     ! del_Theta in degrees
+    dTh=(CLat_Max-CLat_Min)/(Num_u1-1.d0)     ! del_Theta in degrees
 
 ! Low here is low theta or poleward end
 ! High here is high theta or equatorward point
 ! If Thi=0 then B2(Azimuthal) is zero else B1 (theta) is zero
-    LowBC_switch   = 0          ! '1' -> Thi = 0 '0' -> Dthi/Dtheta = 0, PoleWard condition : If Thi=0 then this also sets B2=0
-    HighBC_switch  = 0          ! '1' -> Thi = 0  '0' -> Dthi/Dtheta = 0, Equatorward condition has B1=0 in the inner boundary condition
+    LowBC = 0          ! '1' -> Thi = 0 '0' -> Dthi/Dtheta = 0, PoleWard condition : If Thi=0 then this also sets B2=0
+    HighBC = 0          ! '1' -> Thi = 0  '0' -> Dthi/Dtheta = 0, Equatorward condition has B1=0 in the inner boundary condition
 
 ! Get cos(theta) points for Legendres
-    Do ii = 1,Num_u1
-      Theta(ii) = (CLat_Min+((ii-1.d0)*del_th))*DegToRad    ! Northern Hemisphere
+    do ii = 1,Num_u1
+      Theta(ii) = (CLat_Min+((ii-1.d0)*dth))*DegToRad    ! Northern Hemisphere
       X(ii) = cos(Theta(ii))
     enddo
-    del_th = del_th*DegToRad     ! delta_theta in radians
-    h = del_th
+    dTh = dth*DegToRad     ! delta_theta in radians
+    dTh2 = 2.d0*dTh
+    dTh_sq = dTh*dTh       ! del_theta squared
 
 ! Numerical differentiation approx of Laplace Eqn in Spherical coords
 ! Interior Points
-
-    allocate ( Array(Ipts,Ipts) )
-
-    do ii = 2, Num_u1-3
-      SinT  = Sin(Theta(ii+1))
-      CosT  = Cos(Theta(ii+1))
-      Array(ii,ii-1)= ( 1.d0/h**2) + CosT/SinT*(-1.d0/(2.d0*h))
-      Array(ii,ii)  = (-2.d0/h**2) - (M_num**2)/(SinT**2)
-      Array(ii,ii+1)= ( 1.d0/h**2) + CosT/SinT*( 1.d0/(2.d0*h))
+    allocate ( Array(ipts,ipts) )
+    do ii = 2, ipts-1
+      SinT  = sin(Theta(ii+1))
+      CosT  = cos(Theta(ii+1))
+      Array(ii,ii-1)=  1.d0/dTh_sq - CosT/SinT/dTh2
+      Array(ii,ii)  = -2.d0/dTh_sq - (M_num**2)/(SinT**2)
+      Array(ii,ii+1)=  1.d0/dTh_sq + CosT/SinT/dTh2
     enddo
 
 ! Low Latitude End - Forward differences ( dp/dT = 0  -> P(0) =  4/3 P(1) - 1/3 P(2) )
     SinT= Sin(Theta(2))
     CosT= Cos(Theta(2))
-    If (LowBC_switch == 0) then          ! For deriv=0 BC
-      P0 = ( 1.0/h**2) + CosT/SinT*(-1.0/(2.0*h))
-      Array(1,1) = (-2.0/h**2) - (M_num**2)/(SinT**2)  + 4.0/3.0*P0
-      Array(1,2) = ( 1.0/h**2) + CosT/SinT*( 1.0/(2.0*h))- 1.0/3.0*P0
-    else                                ! For Thi=0 BC
-      P0 = 0.0
-      Array(1,1) = (-2.0/h**2) - (M_num**2)/(SinT**2)    + 4.0/3.0*P0
-      Array(1,2) = ( 1.0/h**2) + CosT/SinT*( 1.0/(2.0*h))- 1.0/3.0*P0
-    endif 
+    p0 = 0.d0
+    If (LowBC == 0) p0=1.d0/dTh_sq - CosT/SinT/dTh2
+    Array(1,1) = -2.d0/dTh_sq - (M_num**2)/(SinT**2) + 4.d0/3.d0*p0
+    Array(1,2) =  1.d0/dTh_sq + CosT/SinT/dTh2 - 1.d0/3.d0*p0
 
 ! High Latitude End - Backwards differences ( dp/dT = 0  -> P(n) =  4/3 P(n-1) - 1/3 P(n-2) )
-    SinT= Sin(Theta(Num_u1-1))
-    CosT= Cos(Theta(Num_u1-1))
-    If (HighBC_switch == 0) then 
-      Pn = ( 1.0/h**2) + CosT/SinT*(1.0/(2.0*h))              ! Derivative = 0
-      Array(Num_u1-2, Num_u1-3)=( 1.0/h**2)+CosT/SinT*(-1.0/(2.0*h))-1.0/3.0*Pn
-      Array(Num_u1-2, Num_u1-2)=(-2.0/h**2)-(M_num**2)/(SinT**2)+4.0/3.0*Pn
-    else 
-      Pn = 0.0                                          ! Thi = 0
-      Array(Num_u1-2, Num_u1-3)=( 1.0/h**2)+CosT/SinT*(-1.0/(2.0*h))-1.0/3.0*Pn 
-      Array(Num_u1-2, Num_u1-2)=(-2.0/h**2)-(M_num**2)/(SinT**2)+4.0/3.0*Pn      
-    endif
-
-    allocate ( Array1(Ipts,Ipts) )
-
-    Array1 = Transpose(Array)
+    SinT= sin(Theta(Num_u1-1))
+    CosT= cos(Theta(Num_u1-1))
+    p0 = 0.d0
+    If (HighBC == 0) pn=1.d0/dTh_sq + CosT/SinT/dTh2              ! Derivative = 0
+    Array(ipts,ipts)  = -2.d0/dTh_sq - (M_num**2)/(sinT**2) + 4.d0/3.d0*pn
+    Array(ipts,ipts-1)=  1.d0/dTh_sq - cosT/sinT/dTh2 - 1.d0/3.d0*pn
 
 ! Solve Ax=lmbda x Eqn for lmbda and x, lbmda=-l(l+1)
+    allocate (VR(ipts,ipts))
+    allocate (wR(ipts))
+    allocate (WORK(4*ipts))
+    allocate (VL(1,ipts))
+    allocate (wI(ipts))
 
-    CALL DGEEVX('Balance','Vectors (left)','Vectors (right)', & 
-             'Both reciprocal condition numbers',Ipts,Array,LDA,WR,WI, &
-             VL,LDVL,VR,LDVR,ILO,IHI,SCALE,ABNRM,RCONDE,RCONDV,  &
-             WORK,LWORK,IWORK,INFO)
-    Eval=Dcmplx(Wr,Wi)
-    do jj=1,Ipts
-      IF (WI(jj).EQ.0.0D0) THEN
-        do ii=1,Ipts
-          Evec(ii,jj)=DCmplx(VR(II,JJ),0.d0)
-      print*,'0: ii,jj,evec = ',ii,jj,evec(ii,jj)
-        enddo
-      ELSE IF (WI(JJ).GT.0.0D0) THEN
-        do ii=1,Ipts
-          Evec(ii,jj)=Dcmplx(VR(II,JJ),VR(ii,jj+1))
-      print*,'1: ii,jj,evec = ',ii,jj,evec(ii,jj)
-        enddo
-      ELSE
-        do ii=1,Ipts
-          Evec(ii,jj)=Dcmplx(VR(II,JJ-1),-VR(ii,jj))
-      print*,'2: ii,jj,evec = ',ii,jj,evec(ii,jj)
-        enddo
-      END IF
+    call dgeev(jobVL, jobVR, ipts, Array, ipts, wR, wI, VL, LDVL, &
+               VR, ipts, WORK, LWORK, info)
+
+    deallocate (wI)
+    deallocate (VL)
+    deallocate (WORK)
+
+! Calculate eigenvalues
+    allocate (Lp(ipts))
+    Lp = 0.d0            ! Initialise array to 0.0
+    Do ii = 1, ipts
+      Lp(ii) = (-1.d0+sqrt(1.d0-4.d0*(wR(ii))))/2.d0  ! Solve quadratic lmbda=-l**2-l
     enddo
+    deallocate (wR)
 
-    allocate (Lp(Ipts))
-    allocate (Lm(Ipts))
-
-    Do ii = 1, Ipts
-      Lp(ii) = (-1.0+sqrt(1.0-4.0*(EVAL(ii))))/2.0  ! Solve quadratic lmbda=-l**2-l
-      Lm(ii) = (-1.0-sqrt(1.0-4.0*(EVAL(ii))))/2.0
-    enddo 
-
-!    call DSVRGP (Ipts, Lp, tempL, IPERM)    ! Index is IPerm
 ! sort eigenvalues - Lp
-    allocate (T((Ipts+1)/2))
-    allocate (Ti((Ipts+1)/2))
-    allocate (Iperm(Ipts))
-    do i=1,Ipts
-      Iperm(i)=i   ! get idx
+    allocate (T((ipts+1)/2))
+    allocate (Ti((ipts+1)/2))
+    do ii=1,ipts
+      Iperm(ii)=ii   ! get idx
     enddo
-    call merge_sort(Lp, Ipts, T, Iperm, Ti)
+! trap for constant term (exclude it)
+    where (Lp <= 0.1) Lp = 9999.0
+    call merge_sort(Lp, ipts, T, Iperm, Ti)
     deallocate(Ti)
     deallocate(T)
-
-    If (Lp(Iperm(1)) <= 0.0) then
-      kk=Iperm(1)
-      do ii=1, Num_u1-1
-        Iperm(ii)=Iperm(ii+1)
-      enddo
-      Iperm(Ipts)=kk
-    endif
-
+! eigenvalues are now sorted, get K of them
     do ii=1,K
-      Zeros(ii) = Lp(Iperm(ii))    ! Store sorted solns to eigenvalue quadratic 
+      Zeros(ii) = Lp(ii)    ! Store sorted solns to eigenvalue quadratic
     enddo
 
 ! Now get the sorted eigenvectors - these form the potential basis function set
-    do kk = 1,K 
+    do ii = 1,K 
       do jj = 2, Num_u1-1 
-        Ynm(kk,jj) = Evec(jj-1,Iperm(kk))
+        Ynm(ii,jj) = VR(jj-1,Iperm(ii))
       enddo
     enddo
+    deallocate (Lp)
+    deallocate (VR)
+    deallocate (Array)
 
-    If (LowBC_switch == 0) then
-      Do kk = 1,K                              ! Derivative = 0
-        Ynm(kk,1) = 4.0/3.0*Ynm(kk,2)  - 1.0/3.0*Ynm(kk,3)      ! Low  Lat Boundary
+! Reconstruct end points of eigenvectors
+    If (LowBC == 0) then
+      do ii = 1,K 
+        Ynm(ii,1)=4.d0/3.d0*Ynm(ii,2)-1.d0/3.d0*Ynm(ii,3)   ! Low  Lat Boundary
       enddo
     else 
-      Ynm(:,1) = 0.0                      ! Low  Lat Boundary, Thi=0
+      Ynm(:,1) = 0.d0                ! Low  Lat Boundary, Thi=0
     endif
 
-    If (HighBC_switch == 0) then
-      Do kk = 1,K                              ! Derivative = 0
-        Ynm(kk,Num_u1) = 4.0/3.0*Ynm(kk,Num_u1-1) - 1.0/3.0*Ynm(kk,Num_u1-2)     ! High Lat Boundary
+    If (HighBC == 0) then
+      do ii = 1,K                    ! Derivative = 0
+        Ynm(ii,Num_u1)=4.d0/3.d0*Ynm(ii,Num_u1-1)-1.d0/3.d0*Ynm(ii,Num_u1-2)     ! High Lat Boundary
       enddo
     else 
-      Ynm(:,Num_u1) = 0.0                        ! High Lat Boundary
+      Ynm(:,Num_u1) = 0.d0           ! High Lat Boundary
     endif
 
 !   Normalise Basis Functions Numerically (using trapezoidal rule)
-    do kk = 1,K
-      do kk1 = 1 ,K
-        End1 =(Ynm(kk,1)*sqrt(sin(theta(1))))*(Ynm(kk1,1)*sqrt(sin(theta(1))))
-        End2 =(Ynm(kk,Num_u1)*sqrt(sin(theta(Num_u1))))*(Ynm(kk1,Num_u1)*sqrt(sin(theta(Num_u1))))
-        res=(2.0*Dot_Product(Ynm(kk,:)*sqrt(sin(theta(:))),Ynm(kk1,:)*sqrt(sin(theta(:)))) - End1 - End2)*(del_Th/2.0)
-        ortho_n(kk,kk1) = res
+    do ii = 1,K
+      do jj = 1 ,K
+        End1 =(Ynm(ii,1)*sqrt(sin(theta(1))))*(Ynm(jj,1)*sqrt(sin(theta(1))))
+        End2 =(Ynm(ii,Num_u1)*sqrt(sin(theta(Num_u1))))*(Ynm(jj,Num_u1)*sqrt(sin(theta(Num_u1))))
+        res=(2.0*Dot_Product(Ynm(ii,:)*sqrt(sin(theta(:))),Ynm(jj,:)*sqrt(sin(theta(:)))) - End1 - End2)*(dTh/2.0)
+        ortho_n(ii,jj) = res
       enddo
     enddo
 
-    do kk = 1,K
-      Ynm(kk,:) = Ynm(kk,:)/sqrt(ortho_n(kk,kk))      ! Basis functions are now an orthonormal basis set
+    do ii = 1,K
+      Ynm(ii,:) = Ynm(ii,:)/sqrt(ortho_n(ii,ii))      ! Basis functions are now an orthonormal basis set
     enddo
 
-    do kk = 1,K
-      l = Real(Zeros(kk))
-      RTerm_dr(kk)  = l*RI_s**(l-1.0)*(1.0-(rE_s/RI_s)**(2.0*l+1.0))          ! Radial Derivative
-      RTerm(kk)= RI_s**(l) + (l/(l+1.0))*rE_s**(2.0*l+1.0)*RI_s**(-(l+1.0))   ! Radial Term
-      Ynm_S(kk,:) = Ynm(kk,:)*RTerm_dr(kk)
+    do ii = 1,K
+      RTerm_dr(ii) = zeros(ii)*RI_s**(zeros(ii)-1.0)*(1.0-(rE_s/RI_s)**(2.0*zeros(ii)+1.0))          ! Radial Derivative
+      RTerm(ii) = RI_s**zeros(ii) + (zeros(ii)/(zeros(ii)+1.0))*rE_s**(2.0*zeros(ii)+1.0)* &
+                  RI_s**(-(zeros(ii)+1.0))            ! Radial Term
+      Ynm_S(ii,:) = Ynm(ii,:)*RTerm_dr(ii)
     enddo
 
   end subroutine do_basis
