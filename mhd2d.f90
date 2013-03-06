@@ -27,7 +27,9 @@
 
     integer ::  ii, jj, kk
     integer ::  Num_u1, Num_u1_2, Num_u3, Num_u3_2, K
-    integer(8) :: nt
+    integer(8) :: nt, tt
+    integer :: plot_freq
+    real(DBL) :: data_sp
 
     real(DBL) :: LMin_u1, LMax_u1, LMin_u3, LMax_u3, m_num
     real(DBL) :: dt, del_Th_0_u1, del_Th
@@ -39,7 +41,8 @@
 
 ! grid arrays
     real(DBL), allocatable, dimension(:) :: LVArr, CoLat_N, CoLat_S, h_mu_outer
-    real(DBL), allocatable, dimension(:,:) :: u1Arr, u3Arr, RArr, ThArr
+    real(DBL), allocatable, dimension(:,:) :: u1Arr, u3Arr, RArr, ThArr, &
+                                              D_u1, D_u3
     real(DBL), allocatable, dimension(:,:) :: XArr, YArr
     real(DBL), allocatable, dimension(:,:) :: g11_con, g13_con, g22_con, g33_con
     real(DBL), allocatable, dimension(:,:) :: g11_cov, g13_cov, g22_cov, g33_cov
@@ -72,12 +75,40 @@
 
 ! Basis set arrays
     real(DBL), allocatable, dimension(:,:) :: Ynm, Ynm_s, Ynm_B3, Ynm_g, &
-                                              Ynm_B3_dr2, Ynm_B3_dr, AlphaB3
+                                              Ynm_B3_dr2, Ynm_B3_dr
     real(DBL), allocatable, dimension(:) :: zeros
+    complex(DBL), allocatable, dimension(:,:) :: AlphaB3
 
-! time loop variables
-    real(DBL) :: time
+!   loop variables
+    real(DBL), allocatable, dimension(:) :: Tdr, drv_B3
+    real(DBL) :: time, h_width, zz, bfa
     integer :: count1
+
+!   shift arrays
+    integer, allocatable, dimension(:) :: S1L, S1R, S3L, S3R
+
+!   loop arrays
+    integer ::LDB,  INFO
+    real(DBL) :: h, h1
+    complex(DBL) :: FirD, SecD
+    integer, allocatable, dimension(:) :: IPIV
+    complex(DBL), allocatable, dimension(:,:) :: B1_con, B2_con, B3_con, &
+                                                 B1_cov, B2_cov, B3_cov, &
+                                                 E1_con, E2_con, &
+                                                 E1_cov, E2_cov, &
+                                                 Av_B1, Av_B3
+    complex(DBL), allocatable, dimension(:) :: B1_N, B2_N, B3_N, E1_N, E2_N, &
+                                               B1_S, B2_S, B3_S, E1_S, E2_S, &
+                                               DThi_dTh_N, DThi_dPh_N, Thi_N, &
+                                               DThi_dTh_S, DThi_dPh_S, Thi_S, &
+                                               DThi_dTh_N_g, DThi_dPh_N_g, &
+                                               DThi_dTh_S_g, DThi_dPh_S_g, &
+                                               J_Th_N, J_Ph_N, E_Th_N, E_Ph_N, &
+                                               J_Th_S, J_Ph_S, E_Th_S, E_Ph_S, &
+                                               Thi_gnd_N, DThi_dr_N, &
+                                               Thi_gnd_S, DThi_dr_S, &
+                                               BetaN, Coeffs_B3_N, &
+                                               BetaS, Coeffs_B3_S
 
 
 ! - - - - - - - - - start of code - - - - - - - - - - -
@@ -101,6 +132,10 @@
     nt = 5000
 ! dt time step
     dt = 0.00025
+
+!   sample period
+    data_sp = 0.5
+    plot_freq = anint (data_sp / (2*dt))
 
     m_num = 2.0
 
@@ -254,7 +289,7 @@
 !       (2*ii,   2*jj-1)      location of B3   ( located at the same position in space as E1)
 !
 !   Setting up Array for plots of fields
-!
+
   allocate (B1x_ord(Num_u1_2,Num_u3_2))
   allocate (B2x_ord(Num_u1_2,Num_u3_2))
   allocate (B1y_ord(Num_u1_2,Num_u3_2))
@@ -436,7 +471,7 @@
 !  Set up scale factors for the Ionospheric Boundary Conditions for the Spherical Harmonic Expansion
 !   Need to handle the alternating grid pattern on the ionopsheric boundary....
 
-  allocate(Ynm_B3(K,Num_u1), Ynm_g(K,Num_u1), Ynm_B3_dr(K,Num_u1), Ynm_B3_dr2(K,Num_u1/2))
+  allocate(Ynm_B3(K,Num_u1), Ynm_g(K,Num_u1), Ynm_B3_dr(K,Num_u1), Ynm_B3_dr2(K,Num_u1_2))
   allocate(AlphaB3(K,K))
 
   do kk = 1,K                    ! k = Number of Basis Functions in Expansion (from Sav file)
@@ -464,725 +499,389 @@
   count1 = 0
   time=0.d0
 
-  stop
+!  call get_time(tfrom,0,IDlog)
 
-!filename=trim(BEdata)//'coordinate.dat'
-!INQUIRE(FILE =filename, EXIST = exists)
-!!	print*,	filename, '',exists
-!
-!if(restart <=0) then     ! to start a new run
-!print*,''
-!print*,'now we start a new run ....'
-!         if(exists) then		 ! Whether the same data is already there....
-!print*,' The data exists, Input ''C'' to continue, or quit!'
-!      WRITE(*,'(A,$)')'  your command is:> '
-!read(*,'(a)') cont
-!if(cont/='C' .and. cont/='c')
-!     +	 STOP 'Modify DATA_FILE or DIR and try again'
-!print*,' So we proceed anyway......'
-!   endif
-!
-!call getID(IDsave)
-!      open(IDsave,file=filename,form='binary')
-!write(IDsave) Dt*Plot_freq
-!write(IDsave) (u1Arr(2*ii-1,1),ii=1,N1_2)
-!write(IDsave) (u3Arr(1,2*jj),jj=1,N3_2)
-!      close(IDsave)
-!
-!call getID(IDsave)
-!      open(IDsave,file=trim(BEdata)//'fields.dat',form='binary')
-!      write(IDsave) B1x_ord,B1y_ord
-!      close(IDsave)
-!
-!call getID(IDsave)	! save the density, Alfven velocity, transit times.
-!      open(IDsave,file=trim(BEdata)//'density.dat',form='binary')
-!      write(IDsave) N1,N3,xArr,yArr,rho_a,Va_a,Delta_T_CF,Delta_T_FA
-!      close(IDsave)
-!!	print*,maxval(rho_a),minval(rho_a)
-!
-!call getID(IDsave)
-!      open(IDsave,file=trim(BEdata)//'Parameter.log')
-!      write(IDsave,'(i3,2x,i3,2x,a16)') N1_2,N3_2,'N1_2 and N3_2'
-!      write(IDsave,'(i3,8x,a7)') M_num,'M_num'
-!      write(IDsave,'(f6.2,5x,a7)') Width,'width'
-!write(IDsave,'(f6.3,2x,a9)') freq,'freq'
-!      close(IDsave)
-!
-!call getID(IDlog)
-! Filename = TRIM(BEdata)//'Information.log'
-! Open(IDlog,file=Filename,status='unknown')
-!write(IDlog,'(A25)') 'This is a NEW run'
-!!	write(IDlog,*) ''
-!Nf=0
+!   *******************************************************************************************************
+!   Start Time iteration of Fields
+!   ******************************************************************************************************
 
-!else ! to restart,
-!print*,''
-!print*,' now we RESTART from a previous run...'
-!
-!         if(.not.exists) then
-!   print*,'Error: File not exist, will quit... '
-!   stop 'Modify DATA_FILE or DIR or RESTART and try again'
-!   endif
-!102print*,''
-!print*,' Choose which record # to start with:'
-!print*,' Negative value: start from the END of last run'
-!print*,' Positive value: you specify the record #'
-!print*,' 0 to QUIT !'
-!
-!      WRITE(*,'(A,$)')'   your command is:> '
-!read(*,*) restart
-!if(restart==0) stop ' QUIT !'
-!
-!if(restart<0) then
-!count1=0
-!
-!do
-!write(file2,'(i5.5)') count1
-!filename=trim(BEdata)//'full.'//trim(file2)
-!!	print*,filename
-!INQUIRE(FILE =filename, EXIST = exists)
-!if(.not.exists) exit
-!count1=count1+1
-!enddo
-!if(count1<=1) then
-!print*,' The record # does NOT exist'
-!print*,' change RESTART and start a NEW run'
-!stop ' QUIT !'
-!endif
-!count1=count1-1
-!
-!else
-!
-!write(file2,'(i5.5)') restart
-!filename=trim(BEdata)//'full.'//trim(file2)
-!INQUIRE(FILE =filename, EXIST = exists)
-!if(.not.exists) then
-!print*,'The record # does NOT exist, try another record #'
-!goto 102
-!endif
-!count1=restart
-!
-!endif
-!Nf=count1*full_freq+1
-!
-!write(file2,'(i5.5)') count1
-!filename =trim(BEdata)//'full.'//trim(file2)
-!call getID(IDsave)
-!      open(IDsave,file=filename,status='old',form='binary')
-!      read(IDsave,err=101) time
-!      read(IDsave,err=101) B1_con,B2_con,B3_con,E1_con,E2_con,
-!     +     B1_cov,B2_cov,B3_cov,E1_cov,E2_cov
-!close(IDsave)
-!
-!print*,''
-!if(Nf>=Nt-1)	stop ' Error: change NT and try again !'
-!
-!print*,' now we restart from #',count1,', time=',real(time)
-!
-!call getID(IDlog)
-!write(file2,'(i5.5)') count1
-! Filename = TRIM(BEdata)//'Information.log.'//trim(file2)
-! Open(IDlog,file=Filename,status='unknown')
-!write(IDlog,'(A36,2x,i4,a8,f6.2,a7)') 'This is a RESTART run, from
-!     + Record #',count1,', time=',time,'second'
-!1write(IDlog,*) ''
-!
-!endif
-!
-!call get_time(tfrom,0,IDlog)
-!
-!Print*,'Output task info to ', Filename
-!print*,''
-!print*,'    Record #   Iteration #     Time'
-!
-! 
-!!   *******************************************************************************************************
-!!   Start Time iteration of Fields
-!!   ******************************************************************************************************
-!
 !  D_u1(:,:)=u1Arr(IR(:),:)-u1Arr(IL(:),:)!   Set up differences on Grid
 !  D_u3(:,:)=u3Arr(:,JR(:))-u3Arr(:,JL(:))
-!!
-!!   Time Driver on Equatorial Slice (constant u1 surface)
-!!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!!   Set E = div(T) for an Alfven wave T = is a guassian
-!
-!!    zz0    = D_out(Fix(N1/2.0+9))
-!!    QQ1 = where (Lvarr GE Posn_S)
-!!    zz0 = D_out(min(QQ1))
-!    do ii=1,N1
-!      if((Lvarr(ii)<=Posn_S).and.(Lvarr(ii+1)>Posn_S)) zz0=D_out(ii+1)
-!    enddo
-!
-!    Do ii = 2,N1-1
-! zz       = (D_out(ii)-zz0)/Hwidth
-!  Tdr(ii)  = Exp(-zz**2.)
-!    enddo
-!    Tdr(1)=0.0 ; Tdr(N1) = 0.0
-!
-! Do ii = 2,N1-1
-!        D_Tdr(ii) = (Tdr(ii+1) - Tdr(ii-1))/(D_out(ii+1)-D_out(ii-1))       ! Derivative of Gausssiona in U1 direction
-! Enddo
-!    D_Tdr(1)=0.0 ; D_Tdr(N1) = 0.0
 
-! Do tt = Nf,Nt-1                             ! Start of Time Iteration Loop
-!
-! Time     = 2.d0*Dt*tt                              ! Time Counter
-!
-!!   Boundary Conditions
-!!   ~~~~~~~~~~~~~~~~~~~~
-!
-!!   Boundary Conditions
-!!   ***************************************************************
-!!   Outer Bounday
-!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!
-!  E1_cov(0:N1-1,N3-1) = E1_Dr(0:N1-1)
-!  E2_cov(0:N1-1,N3-1) = E2_Dr(0:N1-1)
+  allocate (Tdr(Num_u3))
 
+  Tdr = 0.0
+!   Time Driver on Equatorial Slice (constant u1 surface)
+!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-!   Single Frequency driver (with expondential evelope)
-! StartRamp = (Exp(1.d0-T_ramp/(time))/EXP(1.d0))
-! EndRamp   = (Exp(1.d0-T_ramp/(Dstop-time))/EXP(1.d0))
+  h_width = 5.0
 
-!   Ramp on driver to mimimize transients
-! Tdep   = 1.0e-2*sin(2.d0*dpi*freq/1000.d0*time)*StartRamp*EndRamp
+!  print*,D_out(Num_u3_2)
 
-!   Zero driver evelope
-!If Time GT Dstop then Tdep = 0.0
+  do ii = 1, Num_u3, 2  ! CHECKED
+    zz = (D_out(ii)-D_out(Num_u3_2))/h_width
+    Tdr(ii) = exp(-zz**2)
+  enddo
 
-!   Pulse driver
-! Norm      = 0.2
-! Tdep   = 10.0*Time/Norm*(1.0-time/Norm)*Exp(-5.0*time/Norm)
-
-
-! carr    = cos(2.*dpi*(time-2.5/Width)*freq)
-! Env     = exp(-((time-2.5/Width)*Width)**2.)
-! Tdep    = Carr*Env
-!
-!**E1_outer=-B2_cov(:,N3)*Va_a(:,N3)*evens +D_Tdr*Tdep*evens*Amp        ! Allow outward travelling waves ?
-!**E2_outer= B1_cov(:,N3)*Va_a(:,N3)*odds+m_num*Tdr*Tdep*odds*Amp   ! Allow outward travelling waves ?
-!
-!!   Conducting Northern Ionosphere
-!!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!
-!  E1_cov(:,1)    = E1_N(1:N1)
-!  E2_cov(:,1)    = E2_N(1:N1)                ! Conducting Northern Ionosphere using BC on Ionosphere
-!
-!!   Inner L shell Boundary
-!!   ~~~~~~~~~~~~~~~~~~~~~~
-!  E2_cov(1,:)      = 0.d0                    ! Perfectly Reflecting
-!  B1_cov(1,:)      = 0.d0
-!
-!!   Outer L shell Boundary
-!!   ~~~~~~~~~~~~~~~~~~~~~~
-!   B3_cov(N1,:)   =  0.0 
-!
-!!   *************************************************************************************************************
-!   Start time iterations
-!
-!!   E field iteration
-!!
-!!   Solve E1_con
-!      E1_con(:,:) = 2.d0*Dt*V2(:,:)/Jacb(:,:)*   
-!     +  (zim*M_num*B3_cov(:,:) - (B2_cov(:,JR(:)) - 
-!     +  B2_cov(:,JL(:)))/D_u3(:,:)) + E1_con(:,:)
-!
-!!   Solve E2_con
-!      E2_con(:,:) = 2.d0*Dt*V2(:,:)/Jacb(:,:)*((B1_cov(:,JR(:)) 
-!     +  - B1_cov(:,JL(:)))/D_u3(:,:)  
-!     +  - (B3_cov(IR(:),:) - B3_cov(IL(:),:))
-!     +  /D_u1(:,:)) + E2_con(:,:)
-!
-!!   End of E field contravariant iteration
-!
-!!   Evolving Contravariant (Tangent) vector fields to Covariant vectors fields
-!!   **************************************************************************
-!
-!!   Evolve E1_cov
-!      E1_cov = E1_con/g11_con
-!
-!!   Evolve E2_cov
-!      E2_cov = E2_con*g22_cov
-!
-!!   Conducting Northern Ionosphere
-!!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!
-!  E1_cov(:,1)         = E1_N(:)
-!  E2_cov(:,1)         = E2_N(:)               ! Conducting Northern Ionosphere using BC on Ionosphere
-!
-!!   Outer Boundary (with Driver)
-!!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!
-!  E1_cov(:,N3)   = E1_Outer(:)
-!  E2_cov(:,N3)   = E2_Outer(:) 
-!!   Inner L shell Boundary
-!!   ~~~~~~~~~~~~~~~~~~~~~~
-!  E2_cov(1,:)= 0.d0                           ! Clean up after shifts due to odd number of points
-!  E2_con(1,:)= 0.d0 ;   E2_con(:,1) = 0.d0
-!  B1_cov(1,:)= 0.d0
-!  E1_con(1,:)= 0.d0 ;   E1_con(:,1) = 0.d0
-!
-!!   B field iteration
-!!   ********************************************************** *******!
-!
-!!   Solve B1_con
-!      B1_con(:,:)= 2.d0*Dt/Jacb(:,:)*(E2_cov(:,JR(:))   
-!     +  - E2_cov(:,JL(:)))/D_u3(:,:) + B1_con(:,:)
-!
-!!   Solve B2_con
-!      B2_con(:,:)= -2.d0*Dt/Jacb(:,:)*(E1_cov(:,JR(:)) 
-!     +  - E1_cov(:,JL(:)))/D_u3(:,:) + B2_con(:,:)
-!
-!!   Solve B3_con
-!      B3_con(:,:)=2.d0*Dt/Jacb(:,:)*( zim*m_num*
-!     +   E1_cov(:,:) - (E2_cov(IR(:),:) -
-!     +   E2_cov(IL(:),:))/D_u1(:,:)) + B3_con(:,:)
-!
-!!   Outer Corner Point Ionopshere and Outer L shell
-!      B3_con(N1,1) = 4.d0/3.d0*B3_con(N1-2,1) -1.d0/3.d0*B3_con(N1-4,1)
-!      B3_con(N1,N3)= 4.d0/3.d0*B3_con(N1-2,N3)-1.d0/3.d0*B3_con(N1-4,N3)
-!!   End of B field contravariant interation
-!
-!!   Evolving Contravariant Interior Grid B fields to Convariant vectors fields
-!!   **************************************************************************
-!
-!!   Evolve B1_cov
-!      Ave_B3(:,:)= (B3_con(IR(:),JR(:)) + B3_con(IR(:),
-!     +   JL(:)) + B3_con(IL(:),JR(:)) + B3_con(IL(:),JL(:)))/ 4.d0
-!      Ave_B3(:,1)= 0.0;    Ave_B3(:,N3) = 0.0
-!      B1_cov      = B1_con*g11_cov + Ave_B3*g13_cov
-!      B1_cov(:,1) = 0.d0  ;   B1_cov(:,N3)    = 0.d0         ! Clean up after shifts due to odd number of points
-!
-!!   Inner L shell Boundary
-!!   ~~~~~~~~~~~~~~~~~~~~~~
-!      B1_cov(1,:)        = 0.d0
-!
-!!   Evolve B2_cov
-!      B2_cov = B2_con*g22_cov
-!      B2_cov(:,1)     = 0.d0  ;     B2_cov(:,N3)   = 0.d0   ! Clean up after shifts due to odd number of points
-!
-!!   Evolve B3_cov
-!      Ave_B1(:,:) = (B1_con(IR(:),JR(:)) + B1_con(IR(:),
-!     +   JL(:)) + B1_con(IL(:),JR(:)) +
-!     +   B1_con(IL(:),JL(:)))/ 4.d0
-!      Ave_B1(:,1)  = 0.0      ;    Ave_B1(:,N3)   = 0.0      ! Clean up after shifts due to odd number of points
-!      Ave_B1(:,2)  = 0.0      ;    Ave_B1(:,N3-1) = 0.0
-!      B3_cov  = Ave_B1*g13_cov + B3_con*g33_cov
-!
-!!   Along Northern Ionospheric Boundary
-!      Ave_B1(:,:) = (B1_con(IL(:),JR(:)) + B1_con(IR(:)
-!+   ,JR(:)) )/2.d0
-!      B3_cov(:,1) = Ave_B1(:,1)*g13_cov(:,1) + B3_con(:,1)*g33_cov(:,1)
-!!   Along Southern Ionosphere Boundary
-!      Ave_B1(:,:) = (B1_con(IL(:),JL(:)) + B1_con(IR(:),
-!     +   JL(:)) )/2.d0
-!      B3_cov(:,N3) = Ave_B1(:,N3)*g13_cov(:,N3) + B3_con(:,N3)*
-!     +   g33_cov(:,N3)
-!
-!!   Along Inner L shell Boundary
-!      Ave_B1(:,:) = (B1_con(IR(:),JR(:)) + B1_con(IR(:),
-!     +   JL(:)) )/2.d0
-!      B3_cov(1,:) = Ave_B1(1,:)*g13_cov(1,:) + B3_con(1,:)*g33_cov(1,:)
-!
-!!   Along Outer L shell Boundary
-!      B3_cov(N1,:) = 0.0
-
-!   Ionospheric Boundary Condition
-!   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-!!   Using B3_con? in Ionosphere and perfectly conducting ground (B3_con = 0) solve Laplaces equation in Neutral Atmopshere
-!   Calculate B1_cov and B2_cov just below the Ionospheric current sheet.
-!!   Calculate jump in B1 and B2 and calculate Current in Sheet
-!!   Invert to find E1 and E2 values in sheet and use as BC in next iteration.
-!!   Calculate Coefficients in expansion of Bz at the ionosphere (with derivative radial component scale at r = Ri)
-!
-!!   At ionosphere boundary:
-!!   Contravariant at ionos boundary for BB3 is radial
-!!   Covariant at ionos boundary for BB1(colat) and BB2(azimuth) is in the sheet
-!
-!!   FOR NORTHERN HEMISPHERE
-!      B3_N1        = (B3_con(:,1))*h_ra_n                         ! 1,3,5 etc. of full array
-!!  B3_N1     = (Shift(B3_N1,1) + Shift(B3_N1,-1))/2.0 + B3_N1     ! Linear Interpolation
-!  Do ii = 1,N1_2
-! B3_N(ii) = B3_N1(2*ii)                    ! Use only point directly calculated
+!  do ii = 1, Num_u3
+!    write(11, '(i4,1X,2(E18.6E3,1X))') ii, Tdr(ii), D_out(ii)
 !  enddo
-!! Fit Br data to pV/pr basis set
-!
-!!  DataN        = transpose(B3_N)
-!  DataN=B3_N
-!  BetaN        = MatMul(DataN,transpose(DConjG(Ynm_B3_dr2)))
-!
-!!  Coeffs_B3_N   = LU_Complex(AlphaB3,BetaN)      ! Coeffs from d(psi)/dr
-!!	  call DLinct(K,AlphaB3,K,1,Alphatemp,k)
-!!	  Coeffs_B3_N   =MatMul(Alphatemp,BetaN)
-!!      call Dlslcg(K,AlphaB3,K,BetaN,1,Coeffs_B3_N)
-!      call Dlsacg(K,AlphaB3,K,BetaN,1,Coeffs_B3_N)
-!  DThi_dr_N     = MatMul(transpose(Ynm_B3_dr),Coeffs_B3_N)    ! This should be B3_N at twice the spatial resolution
-!!  DThi_dr_N     = reform(DThi_dr_N)
-!      Thi_N        = MatMul(transpose(Ynm_B3),Coeffs_B3_N)          ! Potential Function
-!
-!! Calc. pV/p_Theta
-!  Do jj = 2,N1-1
-! DThi_dTh_N(jj) = (Thi_N(jj+1)-Thi_N(jj-1))/(-2.d0*del_Th)
-!  enddo
-!! Do the end points
-!  DThi_dTh_N(1)  = (-3.0*Thi_N(1)+ 4.d0*Thi_N(2)- Thi_N(3))
-!+      /(-2.d0*del_th)
-!  DThi_dTh_N(N1) = ( 3.0*Thi_N(N1) - 4.d0*Thi_N(N1-1) + 
-!     +     Thi_N(N1-2))/(-2.d0*del_th)
-!  DThi_dTh_N     = 1.d0/Ri*DThi_dTh_N                              ! B_Theta Atmos
-!  DThi_dPh_N     = DCmplx(0.0,1.d0)*M_num*Thi_N/(Ri*sin(Colat_N))  ! B_phi   Atmos, CoLat_N runs from INNER L shell to OUTER L shell
-!
-!! Interpolate B1 and B2 to ALL points just above the ionosphere from model solution to calculate currents in Ionosphere
-!  B1_N  = B1_cov(:,2)/h_th_n
-!  B2_N  = B2_cov(:,2)/h_ph_n
-!!  B1_N  = (Shift(B1_N,1) + Shift(B1_N,-1))/2.0 + B1_N          ! Linear Interpolation
-!!  B2_N  = (Shift(B2_N,1) + Shift(B2_N,-1))/2.0 + B2_N          ! Linear Interpolation
-!  tempN(:)=(B1_N(IL(:))+B1_N(IR(:)))/2.
-!  B1_N=tempN+B1_N
-!  tempN(:)=(B2_N(IL(:))+B2_N(IR(:)))/2.
-!  B2_N=tempN+B2_N 
-!	print*,Real(B1_N(1:3)),Real(B2_N(1:3))
-! 
-!
-!!   Try second order Taylor expansion for end points
-!  h          = CoLat_N(N1-1)-CoLat_N(N1-3)                            ! step size along ionosphere is uniform on B1_N grid
-!  FirD  = ( B1_N(N1-5) - 4.0*B1_N(N1-3) + 3.0*B1_N(N1-1))/(2.0*h)     ! First Derivative Backwards difference O(h**2)
-!  SecD       = (-B1_N(N1-7) + 4.0*B1_N(N1-5) - 5.0*B1_N(N1-3) +
-!     +       2.0*B1_N(N1-1))/(h**2)                                         ! Second Derivative Backwards difference O(h**2)
-!  h1         = CoLat_N(N1-1)-CoLat_N(N1)                              ! Step size on B1_n_interp grid
-!  B1_N(N1)   = B1_N(N1-1) + h1*FirD + ((h1**2)/2.0)*SecD
-!
-!  h          = CoLat_N(4)-CoLat_N(2)                                  ! step size along ionosphere is uniform
-!  FirD         = (-B2_N(6) + 4.0*B2_N(4) - 3.0*B2_N(2))/(2.0*h)       ! First Derivative Forwards difference O(h**2)
-!  SecD= (-B2_N(8) + 4.0*B2_N(6) - 5.0*B2_N(4)+2.0*B2_N(2))/(h**2)     ! Second Derivative Forwards difference O(h**2)
-!  h1         = CoLat_N(1)-CoLat_N(2)
-!  B2_N(1)     = B2_N(2) + h1*FirD + ((h1**2)/2.0)*SecD 
-!
-!!   Currents in the Ionosphere
-!  J_Th_N    = -(B2_N - DThi_dPh_N)/u0
-!  J_Ph_N    =  (B1_N - DThi_dTh_N)/u0
-!
-!!   Calculate electric fields in Ionosphere from discontinuity in B's for next time step...
-!  E_Th_N    = (INVSS_N(:,1,1)*J_Th_N + INVSS_N(:,2,1)*J_Ph_N)
-!  E_Ph_N    = (INVSS_N(:,1,2)*J_Th_N + INVSS_N(:,2,2)*J_Ph_N)
-!
-!**  E1_N   = E_Th_N*h_th_n*evens
-!**  E2_N   = E_Ph_N*h_ph_n*odds
-!
-!! perfect reflect
-!! E1_N(0:N1-1)  = 0.0
-!! E2_N(0:N1-1)  = 0.0
-!!
-!! Now do the Ground fields
-!  Thi_gnd_N=MatMul(transpose(Ynm_g),Coeffs_B3_N)                   ! Potential Function
-! Do jj = 2,N1-1
-!DThi_dTh_N_g(jj)=(Thi_gnd_N(jj+1)-Thi_gnd_N(jj-1))/(-2.d0*del_Th)
-!  enddo
-!! Do the end points
-!  DThi_dTh_N_g(1)  = (-3.0*Thi_gnd_N(1)  + 4.d0*Thi_gnd_N(2)
-!     +     - Thi_gnd_N(3))/(-2.d0*del_th)
-!  DThi_dTh_N_g(N1) = ( 3.0*Thi_gnd_N(N1) - 4.d0*Thi_gnd_N(N1-1)
-!     +     + Thi_gnd_N(N1-2))/(-2.d0*del_th)
-! DThi_dTh_N_g = 1.d0/Ri*DThi_dTh_N_g                               ! B_Theta Ground
-! DThi_dPh_N_g = DCmplx(0.0,1.d0)*M_num*Thi_gnd_N/(Re*sin(Colat_N)) ! B_phi   Ground
-!
-!!   Output Routines
-!
-!if(mod(tt,full_freq) == 0) then	 ! to save the whole data set for future restart
-!count1=tt/full_freq
-!call getID(IDsave)
-!write(file2,'(i5.5)') count1
-!filen=trim(BEdata)//'full.'//trim(file2)
-!open(IDsave,file=filen,form='binary')
-!      write(IDsave) time,B1_con,B2_con,B3_con,E1_con,E2_con,
-!     +     B1_cov,B2_cov,B3_cov,E1_cov,E2_cov
-!      close(IDsave)
-!endif
-!
-!if(mod(tt,PLOT_freq) == 0) then
-!count=tt/Plot_freq
-!
-!Ave_B2(:,:)=(B2_con(IL(:),JR(:))+B2_con(IL(:),
-!     + JL(:))+B2_con(IR(:),JR(:))+B2_con(IR(:),JL(:)))/4.
-!Ave_B3(:,:)=(B3_cov(IL(:),JR(:))+B3_cov(IL(:),
-!     + JL(:))+B3_cov(IR(:),JR(:))+B3_cov(IR(:),JL(:)))/4.
-!Ave_E1(:,:)=(E1_con(IL(:),JR(:))+E1_con(IL(:),
-!     + JL(:))+E1_con(IR(:),JR(:))+E1_con(IR(:),JL(:)))/4.
-!Ave_E2(:,:)=(E2_con(IL(:),JR(:))+E2_con(IL(:),
-     !+ JL(:))+E2_con(IR(:),JR(:))+E2_con(IR(:),JL(:)))/4.
-!
-!      DO ii = 1,N1_2       ! uses all cells in U1 direction
-!      Do jj = 1,N3_2       ! uses all cells in U3 direction
-!      b_nu(ii,jj) = h_nu(2*ii-1,2*jj)*B1_con(2*ii-1,2*jj)/Re_m     ! dB in nT        ! B in T
-!      b_ph(ii,jj) = h_ph(2*ii-1,2*jj)*Ave_B2(2*ii-1,2*jj)/Re_m     ! dB in nT
-!      b_mu(ii,jj) = Ave_B3(2*ii-1,2*jj)/h_mu(2*ii-1,2*jj)/Re_m     ! dB in nT
-!      e_nu(ii,jj) = h_nu(2*ii-1,2*jj)*Ave_E1(2*ii-1,2*jj)          ! dE in V/m
-!      e_ph(ii,jj) = h_ph(2*ii-1,2*jj)*Ave_E2(2*ii-1,2*jj) ! dE in V/m
-!       enddo
-!       enddo 
-!
-!if(mod(tt,200)==0) print*,count,tt,real(time)
-!
-!!save,Filename=Plot_dir+'BE'+string(count,'(i4.4)')+'.sav',b_mu,b_nu,b_ph,e_nu,e_ph
-!!save,Filename=Plot_dir+'BE'+string(count,'(i4.4)')+'.sav',B1_con,Ave_B2,Ave_B3,Ave_E1,Ave_E2 !b_mu,b_nu,b_ph,e_nu,e_ph
-!!endif
-!
-!
-!!  If tt Mod PLOT_freq eq 0 then $
-!!  Begin
-!
-!!Print*,'Time iteration Number = ',tt,' Time = ',Time
-!! Calc field aligned coord field arrays
-!!   Re_m=6378000.d0                ! Earth radii in m
-!   Do ii = 1,N1_2    ! uses all cells in U1 direction
-!    Do jj = 1,N3_2   !    uses all cells in U3 direction
-!       b_nu_a(ii,jj) = 1.0e9*h_nu(2*ii-1,2*jj)*B1_con(2*ii-1,2*jj)/Re_m        ! dB in nT
-!       b_ph_a(ii,jj) = 1.0e9*h_ph(2*ii,2*jj)*B2_con(2*ii,2*jj)/Re_m
-!       b_mu_a(ii,jj) = 1.0e9*B3_cov(2*ii,2*jj-1)/h_mu(2*ii,2*jj-1)/Re_m
-!       e_nu_a(ii,jj) = 1.0e3*h_nu(2*ii,2*jj-1)*E1_con(2*ii,2*jj-1)             !dE in mV/m
-!       e_ph_a(ii,jj) = 1.0e3*h_ph(2*ii-1,2*jj-1)*E2_con(2*ii-1,2*jj-1)
-!       b_nu_a(ii,jj) = h_nu(2*ii-1,2*jj)*B1_con(2*ii-1,2*jj)        ! dB in nT
-!       b_ph_a(ii,jj) = h_ph(2*ii,2*jj)*B2_con(2*ii,2*jj)
-!       b_mu_a(ii,jj) = B3_cov(2*ii,2*jj-1)/h_mu(2*ii,2*jj-1)
-!       e_nu_a(ii,jj) = h_nu(2*ii,2*jj-1)*E1_con(2*ii,2*jj-1)             !dE in mV/m
-!       e_ph_a(ii,jj) = h_ph(2*ii-1,2*jj-1)*E2_con(2*ii-1,2*jj-1)
-!       enddo
-!enddo
-!!   For ii = 0,N1_2-1 do $   ! uses all cells in U1 direction
-!!    Begin
-!!     b_mu_a(ii,0) = 1.0e9*B3_cov(2*ii+1,0)/h_mu(2*ii+1,0)/Re_m
-!!     e_nu_a(ii,0) = 1.0e3*h_nu(2*ii+1,0)*E1_con(2*ii+1,0)
-!!     e_ph_a(ii,0) = 1.0e3*h_ph(2*ii,0)*E2_con(2*ii,0)
-!
-!!     b_mu_a(ii,N3_2) = 1.0e9*B3_cov(2*ii+1,N3-1)/h_mu(2*ii+1,N3-1)/Re_m
-!!     e_nu_a(ii,N3_2) = 1.0e3*h_nu(2*ii+1,N3-1)*E1_con(2*ii+1,N3-1)
-!!     e_ph_a(ii,N3_2) = 1.0e3*h_ph(2*ii,N3-1)*E2_con(2*ii,N3-1)
-!!    end
-!
-!
-!!
-!! Contravariant at ionos boundary for BB3 is radial
-!! Covariant at ionos boundary for BB1(colat) and BB2(azimuth) is in the sheet
-!!
-!
-!   BB1_n(:,count) = B1_n
-!   BB2_n(:,count) = B2_n
-!   BB3_n(:,count) = Dthi_dr_n
-!   EE1_n(:,count) = E_Th_N
-!   EE2_n(:,count) = E_Ph_N
-!   JJ1_n(:,count) = J_Th_N
-!   JJ2_n(:,count) = J_Ph_N
-!
-!   BB1_n_gnd(:,count)  = DThi_dTh_N_g
-!   BB2_n_gnd(:,count)  = DThi_dPh_N_g
 
-!    Time_Str = StrTrim(string(format='(f7.2)',Count1),1)
 
-!call getID(IDsave)
-!write(file2,'(i5.5)') count
-!filen=trim(BEdata)//trim(file2)//'.dat'
-!!print*,	'BE fields data:'; print*,'  ',filen
-!open(IDsave,file=filen,form='binary')
-!write(IDsave) time,b_mu,b_nu,b_ph,e_nu,e_ph
-!      close(IDsave)
-!      close(IDsave)
+! generate shift index arrays
+  allocate (S1L(Num_u1), S1R(Num_u1), S3L (Num_u3), S3R(Num_u3)) 
+  do ii = 1, Num_u1
+    S1L(ii) = ii - 1
+    S1R(ii) = ii + 1
+  enddo
+  S1R(Num_u1) = 1
+  S1L(1) = Num_u1
 
-!	 count1=count1+1
-!	 count=count+1
+  do ii = 1, Num_u3
+    S3L(ii) = ii - 1
+    S3R(ii) = ii + 1
+  enddo
+  S3R(Num_u3) = 1
+  S3L(1) = Num_u3
 
-!FilenameM = Plot_dir+'Sheet_IAR_'+Time_Str+'.sav'
-! Save,Filename=FilenameM,T_count,B1_con,B2_con,B3_con,E1_con,E2_con,B1_cov,B2_cov,B3_cov,E1_cov,E2_cov
-! Save,Filename=FilenameM,T_count,e_nu_a,e_ph_a,b_nu_a,b_ph_a,b_mu_a,$
-!                  B1_n,B2_n,Dthi_dr_n,$
-!                  E_Th_N,E_Ph_N,J_Th_N,J_Ph_N,DThi_dTh_N_g,DThi_dPh_N_g,$
-!                  DThi_dTh_N,DThi_dPh_N,Coeffs_B3_N,time,tt
+  allocate (D_u1(Num_u1,Num_u3), D_u3(Num_u1,Num_u3))
+  D_u1 = u1Arr(S1L(:),:) - u1Arr(S1R(:),:)
+  D_u3 = u3Arr(:,S3L(:)) - u3Arr(:,S3R(:))
 
-! Print*,'Time = ',Count1,' seconds'
-! count1 =Fix(count1+1)
-! end                !    end of modulo plot loop
-!endif
-!
-! Enddo
-!
-!!   End of time iteration loop ****************************************************************************************
-!
-!
-!! 7777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777
-!
-! !FilenameI = Plot_dir+Ionofile
-! !Save,Filename=FilenameI,T_count,Dt,Plot_freq,N1,Colat_N,LVArr,flr_a,Sd_N,Sp_N,Sh_N,$
-! !                       BB1_n,BB2_n,BB3_n,BB3_s,EE1_n,EE2_n,JJ1_n,JJ2_n,Va_a
-!
-! !FilenameG = Plot_dir+gnd_file
-! !Save,Filename=FilenameG,T_count,Dt,Plot_freq,N1,Colat_N,LVArr,flr_a,$
-! !                       BB1_n_gnd,BB2_n_gnd
-!
-! !FilenameP = Plot_dir+Data_file
-! !Save,Filename=FilenameP,T_count,Dt,Plot_freq,N1,N3,Colat_N,LVArr,Va_a,m_num,del_Th_0_1,$
-! !                 Nt,Dt,Freq,Re,Dstop,Amp,T_ramp,LMin_1,LMax_1,$
-! !                 g11_con,g11_cov,g22_con,g22_cov,g13_con,g13_cov,g33_con,g33_cov,$
-! !                 h_mu,h_nu,h_ph,Sd_N,Sp_N,Sh_N,$
-! !                 Ynm,Ynm_S,zeros,F_line,$
-! !                h_ra_n,h_th_n,h_Ph_n,$
-! !                  Delta_T_FA,Delta_T_CF,courant_cond,Intstarttime,Starttime,Finishtime,$
-! !                xArr,yArr,Tharr,Earth,Xe,Ye,B3x_ord,B3y_ord,B2x_ord,B2y_ord,B1x_ord,B1y_ord,$
-! !                E2x_ord,E2y_ord,E1x_ord,E1y_ord,F_len,u3arr,u1arr,rho_a,Tdr
-!
-!Print*,'  Finished computation ....'
-!
-!write(IDlog,'(A90)')'Two Dimensional Time Dependent Meridional Sli
-!     +ce - Ideal MHD Model with Ionosphere'
-!write(IDlog,*) ''
-!write(IDlog,'(A48,2X,F10.5)') 'Courant Conditon = ',Courant_cond
-!write(IDlog,*) ''
-!write(IDlog,'(A60)') 'Model Run Information'
-!write(IDlog,'(A48,2X,i5)') 'Azimuthal Wave Number m = ',M_num
-!write(IDlog,'(A48,2X,i5)') 'Number of full timesteps Nt = ',Nt
-!write(IDlog,'(A48,2X,F10.5)') '1/2 Time step interval Dt = ',Dt
-!write(IDlog,'(A48,2X,F10.5)') 'Freq in mHz of the Driver = ',Freq
-!write(IDlog,'(A48,2X,F10.2)') 'Time Driver stops Dstop = ',Dstop
-!write(IDlog,'(A48,2X,E10.5)') 'Amplitude of Driver Amp = ',Amp
-!write(IDlog,'(A48,2X,F10.5)') 'Height of Ionosphere (in Re) = ',RI
-!write(IDlog,*) ''
-!write(IDlog,'(A55)') 'Grid Information'
-!write(IDlog,'(A48,2X,i5)') 'Number of field lines, u1 coords N1
-!     + = ',N1
-!write(IDlog,'(A48,2X,i5)') 'Number of points along field lines N3
-!     + = ',N3
-!write(IDlog,*) ''
-!write(IDlog,'(A48,2X,F10.5)') 'Max Colatitude (deg) = ',
-!     +  Maxval(Colat_N)*180./dpi
-!write(IDlog,'(A48,2X,F10.5)') 'at outer L shell (in Re) = ',LMax_1
-!write(IDlog,*) ''
-!write(IDlog,'(A48,2X,F10.5)') 'Min Colatitude (deg) = ',
-!     +  Minval(Colat_N)*180./dpi
-!write(IDlog,'(A48,2X,F10.5)') 'at inner L shell (in Re) = ',LMin_1
-!write(IDlog,*) ''
-!write(IDlog,'(A48,2X,F10.5)') 'Cap Angle (deg) = ',
-!+  (Maxval(Colat_N)-Minval(Colat_N))*180./dpi
-!write(IDlog,'(A48,2X,F10.5)') 'Angle step size = ',del_Th_0_1
-!write(IDlog,'(A48,2X,F10.3)') 'Spacial resolution at Ionosphere (i
-!	+n M) = ',del_Th_0_1*dpi/180.*RI*Re_m
-!write(IDlog,*) ''
-!cwrite(IDlog,'(A50)') 'Real Ionopsheres from MSIS IRI and IGRF'
-!cwrite(IDlog,'(A48,2X,A48)') 'Northern Ionosphere File = ',
-!c     +  Ionosphere_N
-!cwrite(IDlog,*) ''
-!write(IDlog,'(A48,2X,i5)') 'Number of time steps between plots Plo
-!     +T_freq = ',Plot_freq
-!write(IDlog,'(A48,2X,F10.5)') 'Frequency of Plots = ',
-!     + Plot_freq*2.*Dt
-!write(IDlog,*) ''
-!
-! call get_time(tto,1,IDlog)
-!
-! Print*,'Total time taken = ',Real(tto - tfrom),' seconds'
-! Print*,'Average Time per time iteration = ',
-!     +        Real((tto - tfrom)/(Nt-Nf))
-! Print*,'Courant Conditon = ',Real(Courant_cond)
+! ---------------------------------------------------------------------
+!                       Start Iteration loop
+! --------------------------------------------------------------------
 
-!write(IDlog,'(A48,2X,F16.9)') 'Total  Time taken = ',Finishtime - Starttime
-!write(IDlog,'(A48,2X,F16.9)') 'Total  Time (in Hrs) = ',(Finishtime - Starttime)/3600.
-!write(IDlog,'(A48,2X,F16.9)') 'Average Time per time iteration = ',(Finishtime - Intstarttime)/Nt
-!write(IDlog,'(A30,2x,a40)')'Data were saved in:',Dir
-!write(IDlog,'(A30,2x,a10)')'with the name:',Data_file
-!write(IDlog,*) ''
-!close(IDlog)
+  allocate (drv_B3(Num_u3))
+  allocate (B1_con(Num_u1,Num_u3), B2_con(Num_u1,Num_u3), B3_con(Num_u1,Num_u3))
+  allocate (B1_cov(Num_u1,Num_u3), B2_cov(Num_u1,Num_u3), B3_cov(Num_u1,Num_u3))
+  allocate (E1_con(Num_u1,Num_u3), E2_con(Num_u1,Num_u3))
+  allocate (E1_cov(Num_u1,Num_u3), E2_cov(Num_u1,Num_u3))
 
-!	Print*,'Finished Info file'
+  allocate (Av_B1(Num_u1,Num_u3), Av_B3(Num_u1,Num_u3))
 
-!	Print*,''
-!	Print*,'Courant Conditon = ',Courant_cond
-!	Print*,'Max Colatitude (deg) = ',Maxval(Colat_N)*180./dpi
-!	Print*,'at outer L shell (in Re) = ', LMax_1
-!	Print*,'Min Colatitude (deg) = ',Minval(Colat_N)*180./dpi
-!	Print*,'at inner L shell (in Re) = ', LMin_1
-!	Print*,'Cap Angle (deg) = ',(Maxval(Colat_N)-Minval(Colat_N))*
-!     +    180./dpi
-!	Print*,'Angle step size (deg) = ',del_Th_0_1
-!	Print*,'Spatial resolution long Ionosphere (in M) = ',
-!     +     del_Th_0_1*dpi/180.*RI*Re_m
-!	Print*,''
-!
-!!jump1:continue=1
+  allocate (B1_N(Num_u1), B2_N(Num_u1), B3_N(Num_u1_2))
+  allocate (B1_S(Num_u1), B2_S(Num_u1), B3_S(Num_u1_2))
+  allocate (E1_N(Num_u1), E2_N(Num_u1))
+  allocate (E1_S(Num_u1), E2_S(Num_u1))
 
-!stop
-!101 print*,' Read old data wrong! '
+  allocate (Thi_N(Num_u1))
+  allocate (Thi_S(Num_u1))
+  allocate (DThi_dPh_N(Num_u1), DThi_dth_N(Num_u1))
+  allocate (DThi_dPh_S(Num_u1), DThi_dth_S(Num_u1))
+  allocate (j_Th_N(Num_u1), j_Ph_N(Num_u1))
+  allocate (j_Th_S(Num_u1), j_Ph_S(Num_u1))
+  allocate (E_Th_N(Num_u1), E_Ph_N(Num_u1))
+  allocate (E_Th_S(Num_u1), E_Ph_S(Num_u1))
+  allocate (Thi_gnd_N(Num_u1), DThi_dTh_N_g(Num_u1))
+  allocate (Thi_gnd_S(Num_u1), DThi_dTh_S_g(Num_u1))
 
-END                  !     End of program
-!
-!!
-!! ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** *****
-!!
-!
-!
-!subroutine get_time(tt,Iflag,ID)
-!integer::time_array(9),Iflag,IDsave,ID
-!character*10::Ttime,tempfile,file2
-!	Real(4)::second
-!double precision::tt
-!tempfile='Temp.fil'
-!
-! call Date_and_Time(time=Ttime,values=time_array)
-! write(file2,12) time_array(1),time_array(2),time_array(3)
-!12     format(i4.4,'.',i2.2,'.',i2.2)
-!       print*,''
-!if(Iflag==0) then
-!write(*,*) 'Task starts from: ',trim(file2)//' '//Ttime(1:2)
-!     +    //':'//Ttime(3:4)//':'//Ttime(5:10)
-!if(ID > 0) then
-!write(ID,*)''
-!write(ID,*) 'Task starts from: ',trim(file2)//' '//Ttime(1:2)
-!     +    //':'//Ttime(3:4)//':'//Ttime(5:10)
-!write(ID,*)''
-!endif
-!else
-!write(*,*) 'Task ends at: ',trim(file2)//' '//Ttime(1:2)
-!     +    //':'//Ttime(3:4)//':'//Ttime(5:10)
-!if(ID > 0) then
-!write(ID,*)''
-!write(ID,*) 'Task ends at: ',trim(file2)//' '//Ttime(1:2)
-!     +    //':'//Ttime(3:4)//':'//Ttime(5:10)
-!write(ID,*)''
-!endif
-!endif
-!print*,''
-!
-!call getID(IDsave)
-!open(IDsave,file=tempfile)          !,status='unknown')
-!write(IDsave,53) Ttime(5:10)
-!53 format(a6)
-!close(IDsave)
-!open(IDsave,file=tempfile)
-!read(IDsave,54) second
-!54format(f6.3)
-!close(IDsave)
-!tt=3600.*time_array(5)+60.*time_array(6)+second
-!
-!return
-!end subroutine get_time
-!
-!!
-!! ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** ***** *****
-!!
-!
-!
-!subroutine getID(ID)
-!integer::ID
-!    	LOGICAL::busy
-!character*8:: read,write,readwrite
-! 
-!ID=20
-!do
-!       inquire (unit=ID, read=read, write=write, readwrite=readwrite)
-! inquire (unit=ID,opened=busy)
-!       if (read == "UNKNOWN" .and. write == "UNKNOWN" 
-!     +     .and. readwrite == "UNKNOWN" .and. .not.busy) return
-!        ID = ID + 1
-!enddo
-!
-!  return
-!end subroutine getID
+  allocate (BetaN(K), Coeffs_B3_N(K))
+  allocate (BetaS(K), Coeffs_B3_S(K))
+  allocate (IPIV(K))
 
-!  include 'dgeevx.f'
+  LDB = K
+  IPIV = 0
+
+  B1_N = 0.d0
+  B2_N = 0.d0
+  B3_N = 0.d0
+  E1_N = 0.d0
+  E2_N = 0.d0
+
+  B1_S = 0.d0
+  B2_S = 0.d0
+  B3_S = 0.d0
+  E1_S = 0.d0
+  E2_S = 0.d0
+
+  B1_con = 0.d0
+  B2_con = 0.d0
+  B3_con = 0.d0
+  E1_con = 0.d0
+  E2_con = 0.d0
+
+  B1_cov = 0.d0
+  B2_cov = 0.d0
+  B3_cov = 0.d0
+  E1_cov = 0.d0
+  E2_cov = 0.d0
+
+  do tt = 1,Nt-1                             ! Start of Time Iteration Loop
+    time = 2.d0*Dt*tt                              ! Time Counter
+    print*,tt
+    bfa = 2.8e-9*sin(2*pi*time/30.0)
+    drv_B3 = Tdr*bfa*Re_m*h_mu_outer
+
+    B3_cov(Num_u1,1:Num_u3) = drv_B3
+    B3_cov(Num_u1,1) = 0.d0
+
+!   Conducting Northern Ionosphere
+    E1_cov(1:Num_u1,1) = E1_N(1:Num_u1)
+    E2_cov(1:Num_u1,1) = E2_N(1:Num_u1)
+
+!   Conducting Southern Ionosphere
+    E1_cov(1:Num_u1,Num_u3) = E1_S(1:Num_u1)
+    E2_cov(1:Num_u1,Num_u3) = E2_S(1:Num_u1)
+
+!   Inner L Shell Boundary
+    E2_cov(1,1:Num_u3) = 0.d0
+    B1_cov(1,1:Num_u3) = 0.d0
+
+!   E field iteration
+    E1_con = 2.d0 * dt * V2 / Jacb * (im * m_num * B3_cov - &
+        (B2_cov(:,S3L(:)) - B2_cov(:,S3R(:))) / D_u3) + E1_con
+    E2_con = 2.d0 * dt * V2 / Jacb * ((B1_cov(:,S3L(:)) - B1_cov(:,S3R(:))) / &
+        D_u3 - B3_cov(S1L(:),:) - B3_cov(S1R(:),:)) + E2_con
+
+!   Evolve Contravariant (Tangent) vector fields to Covariant vectors fields
+    E1_cov = E1_con / g11_con
+    E2_cov = E2_con * g22_cov
+
+!   Northern Ionosphere
+    E1_cov(1:Num_u1,1)= E1_N(1:Num_u1)
+    E2_cov(1:Num_u1,1)= E2_N(1:Num_u1)      ! Conducting Northern Ionosphere using BC on Ionosphere
+
+!   Southern Ionosphere
+    E1_cov(1:Num_u1,Num_u3) = E1_S(1:Num_u1)
+    E2_cov(1:Num_u1,Num_u3) = E2_S(1:Num_u1)      ! Conducting Southern Ionosphere using BC on Ionosphere
+
+!   Inner L shell Boundary
+    E2_cov(1,1:Num_u3)= 0.d0  ! Perfectly Reflecting
+    E2_con(1,:) = 0.d0          ! inner L shell field line
+    E2_con(:,1) = 0.d0          ! E2_con is populated as E2_CON(*,evens)
+    E2_con(:,Num_u3) = 0.d0   ! other end
+
+    B1_cov(1,1:Num_u3)= 0.d0
+    E1_con(1,:) = 0.d0
+    E1_con(:,1) = 0.d0
+    E1_con(:,Num_u3) = 0.d0
+
+!   B field iteration
+    B1_con = 2.d0 * dt / Jacb * ((E2_cov(:,S3L(:)) - E2_cov(:,S3R(:))) / &
+         D_u3) + B1_con
+    B1_con = -2.d0 * dt / Jacb * ((E1_cov(:,S3L(:)) - E1_cov(:,S3R(:))) / &
+         D_u3) + B2_con
+    B3_con = 2.d0 * dt / Jacb * (im * m_num * E1_cov - (E2_cov(S1L(:),:) - &
+        E2_cov(S1R(:),:)) / D_u1) + B3_con
+
+!   Outer Corner Point Ionopshere and Outer L shell
+    B3_con(Num_u1,1) = 4.d0 / 3.d0 * B3_con(Num_u1-2,1) - &
+        1.d0 / 3.d0 * B3_con(Num_u1-4,1)
+    B3_con(Num_u1,Num_u3) = 4.d0/3.d0*B3_con(Num_u1-2,Num_u3) - &
+        1.d0 / 3.d0 * B3_con(Num_u1-4,Num_u3)
+
+!   Evolve Contravariant Interior Grid B fields to Convariant vectors fields
+    Av_B3 = (B3_con(S1R(:),S3R(:)) + B3_con(S1R(:),S3L(:)) + &
+        B3_con(S1L(:),S3R(:)) + B3_con(S1L(:),S3L(:))) / 4.d0
+    Av_B3(:,1) = 0.0d0
+    Av_B3(:,Num_u3) = 0.0d0
+    B1_cov = B1_con * g11_cov + Av_B3 * g13_cov
+    B1_cov(:,1) = 0.d0
+    B1_cov(:,Num_u3) = 0.d0                    ! Clean up after shifts due to odd number of points
+
+!   Inner L shell Boundary
+    B1_cov(1,:) = 0.d0
+
+!   Evolve B2_cov
+    B2_cov= B2_con * g22_cov
+    B2_cov(:,1) = 0.0d0
+    B2_cov(:,Num_u3) = 0.0d0   ! Clean up after shifts due to odd number of points
+
+!   Evolve B3_cov
+    Av_B1 = (B1_con(S1R(:),S3R(:)) + B1_con(S1R(:),S3L(:)) + &
+        B1_con(S1L(:),S3R(:)) + B1_con(S1L(:),S3L(:))) / 4.d0
+    Av_B1(:,1) = 0.0
+    Av_B1(:,Num_u3) = 0.0d0                     ! Clean up after shifts due to odd number of points
+    Av_B1(:,2) = 0.0d0
+    Av_B1(:,Num_u3-1)=0.0d0
+    B3_cov = Av_B1 * g13_cov + B3_con * g33_cov
+
+!   Along Northern Ionospheric Boundary
+    Av_B1 = (B1_con(S1R(:),S3L(:)) + B1_con(S1L(:),S3L(:))) / 2.0d0
+    B3_cov(:,1) = Av_B1(:,1) * g13_cov(:,1) + B3_con(:,1) * g33_cov(:,1)
+
+!   Along Southern Ionosphere Boundary
+    Av_B1 = (B1_con(S1R(:),S3R(:)) + B1_con(S1L(:),S3R(:))) / 2.0d0
+    B3_cov(:,Num_u3) = Av_B1(:,Num_u3) * g13_cov(:,Num_u3) + B3_con(:,Num_u3) * &
+        g33_cov(:,Num_u3)
+
+!   Along Inner L shell Boundary
+    Av_B1 = (B1_con(S1L(:),S3R(:)) + B1_con(S1L(:),S3L(:))) / 2.0d0
+    B3_cov(1,:) = Av_B1(1,:) * g13_cov(1,:) + B3_con(1,:) * g33_cov(1,:)
+
+!   Along Outer L shell Boundary
+    B3_cov(Num_u1,:) = drv_B3
+
+! Ionosphere Boundary Condition
+!       Using B3_con? in Ionosphere and perfectly conducting ground (B3_con = 0)
+!       solve Laplaces equation in Neutral Atmopshere
+!       Calculate B1_cov and B2_cov just below the Ionospheric current sheet.
+!       Calculate jump in B1 and B2 and calculate Current in Sheet
+!       Invert to find E1 and E2 values in sheet and use as BC in next
+!       iteration.
+!       Calculate Coefficients in expansion of Bz at the ionosphere (with
+!       derivative radial component scale at r = Ri)
+! At ionosphere boundary:
+! Contravariant at ionos boundary for BB3 is radial
+! Covariant at ionos boundary for BB1(colat) and BB2(azimuth) is in the sheet
+!
+!       FOR NORTHERN HEMISPHERE
+!==============================================================================
+!==============================================================================
+!==============================================================================
+!    B3_N1 = (B3_con(:,1)) * h_ra_n ! 1,3,5 etc. of full array
+!   Interpolation
+    do ii = 1,Num_u1_2
+      B3_N(ii)= B3_con(2*ii,1) * h_ra_n(2*ii) ! Use only those points directly calculated
+    enddo
+! B3_N is a complex array
+! Fit Br data to pV/pr basis set
+    BetaN = matmul(B3_N,transpose(Ynm_B3_dr2))
+    Coeffs_B3_N(:) = BetaN(:)
+!    call zgesv(K, K, AlphaB3, K, IPIV, Coeffs_B3_N, K, INFO)
+    DThi_dr_N = matmul(transpose(Ynm_B3_dr),Coeffs_B3_N) ! This should be B3_N at 2x the spatial resolution
+    Thi_N = matmul(Ynm_B3,Coeffs_B3_N)          ! Potential Function
+
+! Calc. pV/p_Theta
+    do jj=2,Num_u1-1 
+      DThi_dTh_N(jj) = (Thi_N(jj+1) - Thi_N(jj-1)) / (-2.d0 * del_Th)
+    enddo
+
+! Do the end points
+    DThi_dTh_N(1) = (-3.0 * Thi_N(1) + 4.d0 * Thi_N(2) - Thi_N(3)) / &
+        (-2.d0 * del_th)
+    DThi_dTh_N(Num_u1) = (3.0 * Thi_N(Num_u1) - 4.d0 * Thi_N(Num_u1-1) + &
+        Thi_N(Num_u1-2)) / (-2.d0 * del_th)
+    DThi_dTh_N = 1.d0 / RI_s * DThi_dTh_N        ! B_Theta Atmos
+    ! B_phi Atmos, CoLat_N runs from INNER L shell to OUTER L shell
+    DThi_dPh_N = CMPLX(0.0,1.d0) * m_num * Thi_N / (RI_s * sin(Colat_N))
+
+! Interpolate B1 and B2 to ALL points just above the ionosphere from model
+! solution to calculate currents in Ionosphere
+    B1_N = B1_cov(:,2) / h_th_n
+    B2_N = B2_cov(:,2) / h_ph_n
+    B1_N = (B1_N(S1R(:)) + B1_N(S1L(:))) / 2.0 + B1_N ! Linear Interpolation
+    B2_N = (B2_N(S1R(:)) + B2_N(S1L(:))) / 2.0 + B2_N ! Linear Interpolation
+
+! Try second order Taylor expansion for end points
+    h = CoLat_N(Num_u1 - 1) - CoLat_N(Num_u1 - 3) ! step size along ionosphere is uniform on B1_N grid
+    FirD = ( B1_N(Num_u1 - 5) - 4.0 * B1_N(Num_u1 - 3) + &
+        3.0 * B1_N(Num_u1 - 1)) / (2.0 * h) ! First Derivative Backwards difference O(h^2)
+    SecD = (-B1_N(Num_u1 - 7) + 4.0 * B1_N(Num_u1 - 5) - &
+        5.0 * B1_N(Num_u1 - 3) + 2.0 *  B1_N(Num_u1 - 1)) / (h ** 2)       ! Second Derivative Backwards difference O(h^2)
+    h1 = CoLat_N(Num_u1-2)-CoLat_N(Num_u1-1) ! Step size on B1_n_interp grid
+    B1_N(Num_u1) = B1_N(Num_u1 - 1) + h1 * FirD + ((h1 ** 2) / 2.0) * SecD
+
+    h = CoLat_N(4)-CoLat_N(2) !; step size along ionosphere is uniform
+    FirD = (-B2_N(6) + 4.0 * B2_N(4) - 3.0 * B2_N(2)) / (2.0 * h)       ! First Derivative Forwards difference O(h^2)
+    SecD = (-B2_N(8) + 4.0 * B2_N(6) - 5.0 * B2_N(4) + 2.0 * B2_N(2)) / (h ** 2)   ! Second Derivative Forwards difference O(h^2)
+    h1 = CoLat_N(1) - CoLat_N(2)
+    B2_N(1)= B2_N(2) + h1 * FirD + ((h1 ** 2) / 2.0) * SecD
+
+! Currents in the Ionosphere
+    J_Th_N = -(B2_N - DThi_dPh_N) / mu0_s
+    J_Ph_N =  (B1_N - DThi_dTh_N) / mu0_s
+
+! Calculate electric fields in Ionosphere from discontinuity in B's for
+! next time step...
+    E_Th_N = (INVSS_N(:,1,1) * J_Th_N + INVSS_N(:,2,1) * J_Ph_N)
+    E_Ph_N = (INVSS_N(:,1,2) * J_Th_N + INVSS_N(:,2,2) * J_Ph_N)
+
+    E1_N = E_Th_N * h_th_n * odds
+    E2_N = E_Ph_N * h_ph_n * evens
+
+!   Now do the Ground fields
+    Thi_gnd_N = matmul(Ynm_g, Coeffs_B3_N)                            ! Potential Function
+    do jj = 2,Num_u1-1 
+      DThi_dTh_N_g(jj) = (Thi_gnd_N(jj + 1) - Thi_gnd_N(jj - 1)) / (-2.d0 * del_Th)
+    enddo
+
+! Do the end points
+    DThi_dTh_N_g(1) = (-3.0 * Thi_gnd_N(1) + 4.d0 * Thi_gnd_N(2) - Thi_gnd_N(3))/(-2.d0 * del_th)
+    DThi_dTh_N_g(Num_u1) = (3.0 * Thi_gnd_N(Num_u1) - 4.d0 * Thi_gnd_N(Num_u1 - 1) + Thi_gnd_N(Num_u1 - 2)) / (-2.d0 * del_th)
+    DThi_dTh_N_g = 1.d0/RI_s*DThi_dTh_N_g ! B_Theta Ground
+    DThi_dPh_N_g = Cmplx(0.0,1.d0) * m_num * Thi_gnd_N / (Re_s * sin(Colat_N)) !B_phi   Ground    
+
+!------------------------------------------------------------------------------
+!   SOUTHERN HEMISPHERE
+!-----------------------------------------------------------------------------
+!    B3_S1 = (B3_con(*,Num_u3))*h_ra_s ! 1,3,5 etc. of full array
+!    B3_S1 = (Shift(B3_S1,1) + Shift(B3_S1,-1))/2.0 + B3_S1
+!   Linear Interpolation
+    do ii = 1,Num_u1_2
+      B3_S(ii) = B3_con(2*ii,Num_u3) * h_ra_s(2*ii)
+    enddo
+
+!   Fit Br data to pV/pr basis set
+    BetaS = matmul(B3_S,transpose(Ynm_B3_dr2))
+    Coeffs_B3_S(:) = BetaS(:)
+!    call zgesv(K, K, AlphaB3, K, IPIV, Coeffs_B3_S, K, INFO)
+    DThi_dr_S = matmul(Ynm_B3_dr,Coeffs_B3_S)             ! This should be B3_S at twice the spatial resolution
+    Thi_S = matmul(Ynm_B3,Coeffs_B3_S)                    ! Potential Function
+
+!   Calc. pV/p_Theta
+    do jj=2,Num_u1-1 
+      DThi_dTh_S(jj) = (Thi_S(jj+1) - Thi_S(jj-1)) / (2.d0 * del_Th)
+    enddo
+
+! Do the end points
+    DThi_dTh_S(1) = (-3.d0 * Thi_S(1) + 4.d0 * Thi_S(2) - Thi_S(3)) / &
+        (2.d0 * del_th)
+    DThi_dTh_S(Num_u1-1) = (3.d0 * Thi_S(Num_u1-1) - 4.d0 * Thi_S(Num_u1-2) + &
+        Thi_S(Num_u1-3)) / (2.d0 * del_Th)
+    DThi_dTh_S = 1.d0 / RI_s * DThi_dTh_S     ! B_Theta Atmos
+    DThi_dPh_S = Cmplx(0.0,1.d0) * m_num * Thi_S / (RI_s * sin(Colat_S))  ! B_phi Atmos
+
+!   Extrapolate  B1 and B2 to ALL points just above ionosphere from model
+!   solution to calculate currents in Ionosphere
+    B1_S= B1_cov(:,Num_u3-1) / h_th_s
+    B2_S= B2_cov(:,Num_u3-1) / h_ph_s
+    B1_S = (B1_S(S1R(:)) + B1_S(S1L(:))) / 2.0 + B1_S ! Linear Interpolation
+    B2_S = (B2_S(S1R(:)) + B2_S(S1R(:))) / 2.0 + B2_S ! Linear Interpolation
+
+!   Try second order Taylor expansion for end points
+    h = CoLat_S(Num_u1-1) - CoLat_S(Num_u1-3) ! step size along ionosphere is uniform on B1_N grid
+!   First Derivative Backwards difference O(h^2)
+    FirD =( B1_S(Num_u1-5) - 4.0 * B1_S(Num_u1-3) + 3.0 * B1_S(Num_u1-1)) / &
+        (2.0 * h)
+!   Second Derivative Backwards difference O(h^2)
+    SecD =(-B1_S(Num_u1-7) + 4.0 * B1_S(Num_u1-5) - 5.0 * B1_S(Num_u1-3) + &
+        2.0 * B1_S(Num_u1-2)) / (h ** 2)
+    h1 = CoLat_S(Num_u1-1) - CoLat_S(Num_u1) ! Step size on B1_n_interp grid
+    B1_S(Num_u1-1) = B1_S(Num_u1-1) + h1 * FirD + ((h1 ** 2) / 2.0) * SecD
+
+    h = CoLat_S(4) - CoLat_S(2) ! step size along ionosphere is uniform
+!   First Derivative Forwards difference O(h^2)
+    FirD = (-B2_S(6) + 4.0 * B2_S(4) - 3.0 * B2_S(2)) / (2.0 * h)
+!   Second Derivative Forwards difference O(h^2)
+    SecD = (-B2_S(8) + 4.0 * B2_S(6) - 5.0 * B2_S(4) + 2.0 * B2_S(2)) / (h ** 2)
+    h1 = CoLat_S(1) - CoLat_S(2)
+    B2_S(1) = B2_S(2) + h1 * FirD + ((h1 ** 2) / 2.0) * SecD
+
+!       Currents in the Ionosphere
+    J_Th_S = -(B2_S - DThi_dPh_S) / mu0_s
+    J_Ph_S =  (B1_S - DThi_dTh_S) / mu0_s
+
+!       Calculate electric fields in Ionosphere from discontinuity in B's for
+!       next time step...
+    E_Th_S = (INVSS_S(:,1,1) * J_Th_S + INVSS_S(:,2,1) * J_Ph_S)
+    E_Ph_S = (INVSS_S(:,1,2) * J_Th_S + INVSS_S(:,2,2) * J_Ph_S)
+    E1_S = E_Th_S * h_th_s * odds
+    E2_S = E_Ph_S * h_ph_s * evens
+
+! Now do the Ground fields
+    Thi_gnd_S = matmul(Ynm_g, Coeffs_B3_S)  ! Potential Function
+    do jj=2,Num_u1-1 
+      DThi_dTh_S_g(jj) = (Thi_gnd_S(jj+1) - Thi_gnd_S(jj-1)) / (-2.d0 * del_Th)
+    enddo
+
+! Do the end points
+    DThi_dTh_S_g(1) = (-3.0 * Thi_gnd_S(1) + 4.d0 * Thi_gnd_S(2) - Thi_gnd_S(3)) / &
+        (-2.d0 * del_th)
+    DThi_dTh_S_g(Num_u1) = (3.0 * Thi_gnd_S(Num_u1) - 4.d0 * Thi_gnd_S(Num_u1-1) + &
+        Thi_gnd_S(Num_u1-2)) / (-2.d0 * del_th)
+    DThi_dTh_S_g = 1.d0 / RI_s * DThi_dTh_S_g ! B_Theta Ground
+    DThi_dPh_S_g = Cmplx(0.0, 1.d0) * m_num * Thi_gnd_S / (Re_s * sin(Colat_S)) ! B_phi   Ground
+  enddo  ! ============== End of Time Loop ====================
+
