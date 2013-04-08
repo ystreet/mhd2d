@@ -78,7 +78,7 @@ module mhd2d_va_cond
                      Sd_N,Sp_N,Sh_N,INVSS_N, &
                      Sd_S,Sp_S,Sh_S,INVSS_S, &
                      h_ph_n,h_th_n,h_ra_n, &
-                     h_ph_s,h_th_s,h_ra_s)
+                     h_ph_s,h_th_s,h_ra_s,use_file)
 !
 !   Calc height integrated ionosphere conductivities
 ! Inputs:
@@ -95,7 +95,7 @@ module mhd2d_va_cond
     implicit none
     save
 
-    integer, intent(in) :: Num_u1
+    integer, intent(in) :: Num_u1, use_file
     real(DBL), dimension(Num_u1), intent(in) :: CoLat_N, CoLat_S
     real(DBL), dimension(Num_u1), intent(out) :: h_ph_n, h_th_n,h_ra_n
     real(DBL), dimension(Num_u1), intent(out) :: h_ph_s, h_th_s,h_ra_s
@@ -123,14 +123,15 @@ module mhd2d_va_cond
     do ii = 1, Num_u1 
       Theta  = Colat_N(ii)                    ! Co-latitude
       I = pi/2.d0-dacos(-2.d0*cos(Theta)/(sqrt(1.d0+3.d0*cos(theta)**2)))    ! Dip Angle (as per sciffer and waters 2002)
-! TEST conductances
-!      Sd_N(ii) = Double(Sig0)*Re_m**2                    ! Height Integrated Direct Conductivity in Northern Hemipshere
-!      Sp_N(ii) =  Double(Sig1)*Re_m**2                    ! Height Integrated Pederson Conductivity in Northern Hemipshere
-!      Sh_N(ii) =  Double(Sig2)*Re_m**2                    ! Height Integrated Hall Conductivity in Noprthern Hemipshere
-
-      Sd_N(ii) = Sd_N(ii)*Re_m**2       ! Height Integrated Direct Conductivity, Nth Hemisphere
-      Sp_N(ii) = Sp_N(ii)*Re_m**2       ! Height Integrated Pedersen Conductivity in Northern Hemipshere
-      Sh_N(ii) = Sh_N(ii)*Re_m**2       ! Height Integrated Hall Conductivity in Noprthern Hemipshere
+      if (use_file.eq.0) then
+        Sd_N(ii) = 1.0e6*Re_m**2
+        Sp_N(ii) = 5.0*Re_m**2
+        Sh_N(ii) = 5.0*Re_m**2
+      else
+        Sd_N(ii) = Sd_N(ii)*Re_m**2       ! Height Integrated Direct Conductivity, Nth Hemisphere
+        Sp_N(ii) = Sp_N(ii)*Re_m**2       ! Height Integrated Pedersen Conductivity in Northern Hemipshere
+        Sh_N(ii) = Sh_N(ii)*Re_m**2       ! Height Integrated Hall Conductivity in Noprthern Hemipshere
+      endif
 
       Theta_0 = Colat_N(ii)
       h_ph_n(ii) =  RI_s*sin(Theta)
@@ -165,15 +166,20 @@ module mhd2d_va_cond
 !      Sd_S(ii) = Double(Sig0)*Re_m**2                    ! Height Integrated Direct Conductivity in Northern Hemipshere
 !      Sp_S(ii) =  Double(Sig1)*Re_m**2                    ! Height Integrated Pederson Conductivity in Northern Hemipshere
 !      Sh_S(ii) =  Double(Sig2)*Re_m**2                    ! Height Integrated Hall Conductivity in Noprthern Hemipshere
-
-      Sd_S(ii) = Sd_S(ii)*Re_m**2       ! Height Integrated Direct Conductivity, Nth Hemisphere
-      Sp_S(ii) = Sp_S(ii)*Re_m**2       ! Height Integrated Pedersen Conductivity in Northern Hemipshere
-      Sh_S(ii) = Sh_S(ii)*Re_m**2       ! Height Integrated Hall Conductivity in Noprthern Hemipshere
+      if (use_file.eq.0) then
+        Sd_S(ii) = 1.0e6*Re_m**2
+        Sp_S(ii) = 5.0*Re_m**2
+        Sh_S(ii) = 5.0*Re_m**2
+      else
+        Sd_S(ii) = Sd_S(ii)*Re_m**2       ! Height Integrated Direct Conductivity, Nth Hemisphere
+        Sp_S(ii) = Sp_S(ii)*Re_m**2       ! Height Integrated Pedersen Conductivity in Northern Hemipshere
+        Sh_S(ii) = Sh_S(ii)*Re_m**2       ! Height Integrated Hall Conductivity in Noprthern Hemipshere
+      endif
 
       Theta_0 = Colat_N(ii)
-      h_ph_s(ii) =  RI_s*sin(Theta)
-      h_th_s(ii) = -RI_s/(2.d0*sin(Theta_0)*cos(Theta_0))
-      h_ra_s(ii) = -(2.d0*RI_s*(cos(Theta_0))**2)/(1.d0+3.d0*(cos(theta_0))**2)
+      h_ph_s(ii) = RI_s*sin(Theta)
+      h_th_s(ii) = RI_s/(2.d0*sin(Theta_0)*cos(Theta_0))
+      h_ra_s(ii) = (2.d0*RI_s*(cos(Theta_0))**2)/(1.d0+3.d0*(cos(theta_0))**2)
 
       Alpha = dacos(-2.d0*cos(Theta)/(sqrt(1.d0+3.d0*cos(theta)**2)))
       Sz_S = Sd_S(ii)*cos(Alpha)*cos(Alpha) + Sp_S(ii)*sin(Alpha)*sin(Alpha)
@@ -194,9 +200,7 @@ module mhd2d_va_cond
           InvSS_S(ii,mm,nn) = mat(mm,nn)
         enddo
       enddo
-
     enddo            ! end of Num_u1 loop
-
   end Subroutine calc_cond_ionos
 !
 end module mhd2d_va_cond

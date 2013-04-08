@@ -135,7 +135,7 @@ module mhd2d_grid
 !
 ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 !
-  subroutine do_basis(m_num, k, Num_u1, L_Min, L_Max, dTh, Ynm, Ynm_s, zeros)
+  subroutine do_basis(m_num, k, Num_u1, L_Min, L_Max, dTh, Ynm_f, Ynm_sf, zeros)
 ! Construct basis set of pV/pr for atmosphere solution
 ! M. D. Sciffer and C. L. Waters
 ! Centre for Space Physics
@@ -152,20 +152,19 @@ module mhd2d_grid
     real(DBL), intent(in) :: m_num, L_Min, L_Max
     real(DBL), intent(inout) :: dTh
 ! Outputs:
-    real(DBL), dimension(k,Num_u1), intent(out) :: Ynm, Ynm_s
+    real(DBL), dimension(k,Num_u1), intent(out) :: Ynm_f, Ynm_sf
     real(DBL), dimension(k), intent(out) :: zeros
 ! Vars for rest of code
-    integer :: ii, jj, ipts, LowBC, HighBC
+    integer :: ii, jj, kk, ipts, LowBC, HighBC, scaleup, npts
     real(DBL) :: dTh2, dTh_sq, End1, End2, res, p0, Pn
     real(DBL) :: CLat_Min, CLat_Max, CosT, SinT
 
-    real(DBL), dimension(Num_u1) :: x, Theta
     real(DBL), dimension(K,K) :: ortho_n
-    real(DBL), dimension(K) :: RTerm_dr, RTerm
+    real(DBL), dimension(K) :: RTerm_dr
 
     integer, allocatable :: Iperm(:)
-    real(DBL), allocatable :: Array(:,:)
-    real(DBL), allocatable :: Lp(:)
+    real(DBL), allocatable :: Array(:,:),Ynm(:,:),Ynm_s(:,:)
+    real(DBL), allocatable :: Lp(:), Theta(:)
 ! variable for sort routine
     real(DBL), dimension(:), allocatable :: T
     integer, dimension(:), allocatable :: Ti
@@ -175,7 +174,10 @@ module mhd2d_grid
     real(DBL), allocatable :: VL(:,:), VR(:,:), &
                               wR(:), wI(:), Work(:)
 
-    ipts = Num_u1-2
+    scaleup = 4
+    npts = scaleup*(Num_u1-1)+1
+    ipts = npts-2
+
     LDVL = 1
     LWORK = 4*ipts
 ! Index array for sort routine
@@ -184,25 +186,28 @@ module mhd2d_grid
       Iperm(ii)=ii
     enddo
 
-    CLat_Min=asin(sqrt(rI_s/L_Max))*RadToDeg       ! Min Co_Lat in degrees, specifies outer boundary
-    CLat_Max=asin(sqrt(rI_s/L_Min))*RadToDeg       ! Max Co_Lat in degrees for Nth Hemisphere (Min Latitude), specifies inner boundary
+    CLat_Min=asin(sqrt(rI_s/L_Max))*RadToDeg   ! Min Co_Lat in degrees, specifies outer boundary
+    CLat_Max=asin(sqrt(rI_s/L_Min))*RadToDeg   ! Max Co_Lat in degrees for Nth Hemisphere (Min Latitude), specifies inner boundary
 
-    dTh=(CLat_Max-CLat_Min)/(Num_u1-1.d0)     ! del_Theta in degrees
+    dTh=(CLat_Max-CLat_Min)/(npts-1.0)         ! del_Theta in degrees
 
 ! Low here is low theta or poleward end
 ! High here is high theta or equatorward point
 ! If Thi=0 then B2(Azimuthal) is zero else B1 (theta) is zero
     LowBC = 0          ! '1' -> Thi = 0 '0' -> Dthi/Dtheta = 0, PoleWard condition : If Thi=0 then this also sets B2=0
     HighBC = 0          ! '1' -> Thi = 0  '0' -> Dthi/Dtheta = 0, Equatorward condition has B1=0 in the inner boundary condition
+!print*,'CLat_min,CLat_max,dTh=',CLat_min,CLat_max,dTh
 
 ! Get cos(theta) points for Legendres
-    do ii = 1,Num_u1
-      Theta(ii) = (CLat_Min+((ii-1.d0)*dth))*DegToRad    ! Northern Hemisphere
-      X(ii) = cos(Theta(ii))
+    allocate(theta(npts))
+    do ii = 1,npts
+      Theta(ii) = (CLat_Min+((ii-1.d0)*dTh))*DegToRad    ! Northern Hemisphere
+!      X(ii) = cos(Theta(ii))
     enddo
-    dTh = dth*DegToRad     ! delta_theta in radians
+    dTh = dTh*DegToRad     ! delta_theta in radians
     dTh2 = 2.d0*dTh
     dTh_sq = dTh*dTh       ! del_theta squared
+!print*,'dTh,dTh2,dTh_sq=',dTh,dTh2,dTh_sq
 
 ! Numerical differentiation approx of Laplace Eqn in Spherical coords
 ! Interior Points
@@ -224,14 +229,15 @@ module mhd2d_grid
     Array(1,2) =  1.d0/dTh_sq + CosT/SinT/dTh2 - 1.d0/3.d0*p0
 
 ! High Latitude End - Backwards differences ( dp/dT = 0  -> P(n) =  4/3 P(n-1) - 1/3 P(n-2) )
-    SinT= sin(Theta(Num_u1-1))
-    CosT= cos(Theta(Num_u1-1))
+    SinT= sin(Theta(npts-1))
+    CosT= cos(Theta(npts-1))
     p0 = 0.d0
     If (HighBC == 0) pn=1.d0/dTh_sq + CosT/SinT/dTh2              ! Derivative = 0
     Array(ipts,ipts)  = -2.d0/dTh_sq - (M_num**2)/(sinT**2) + 4.d0/3.d0*pn
     Array(ipts,ipts-1)=  1.d0/dTh_sq - cosT/sinT/dTh2 - 1.d0/3.d0*pn
 
 ! Solve Ax=lmbda x Eqn for lmbda and x, lbmda=-l(l+1)
+    allocate (Lp(ipts))
     allocate (VR(ipts,ipts))
     allocate (wR(ipts))
     allocate (WORK(4*ipts))
@@ -241,16 +247,14 @@ module mhd2d_grid
     call dgeev(jobVL, jobVR, ipts, Array, ipts, wR, wI, VL, LDVL, &
                VR, ipts, WORK, LWORK, info)
 
-    deallocate (wI)
-    deallocate (VL)
-    deallocate (WORK)
-
 ! Calculate eigenvalues
-    allocate (Lp(ipts))
     Lp = 0.d0            ! Initialise array to 0.0
     Do ii = 1, ipts
       Lp(ii) = (-1.d0+sqrt(1.d0-4.d0*(wR(ii))))/2.d0  ! Solve quadratic lmbda=-l**2-l
     enddo
+    deallocate (wI)
+    deallocate (VL)
+    deallocate (WORK)
     deallocate (wR)
 
 ! sort eigenvalues - Lp
@@ -270,13 +274,16 @@ module mhd2d_grid
     enddo
 
 ! Now get the sorted eigenvectors - these form the potential basis function set
+    allocate (Ynm(K,npts))
+    allocate (Ynm_s(K,npts))
     do ii = 1,K 
-      do jj = 2, Num_u1-1 
+      do jj = 2, npts-1 
         Ynm(ii,jj) = VR(jj-1,Iperm(ii))
       enddo
     enddo
-    deallocate (Lp)
+
     deallocate (VR)
+    deallocate (Lp)
     deallocate (Array)
 
 ! Reconstruct end points of eigenvectors
@@ -290,32 +297,54 @@ module mhd2d_grid
 
     If (HighBC == 0) then
       do ii = 1,K                    ! Derivative = 0
-        Ynm(ii,Num_u1)=4.d0/3.d0*Ynm(ii,Num_u1-1)-1.d0/3.d0*Ynm(ii,Num_u1-2)     ! High Lat Boundary
+        Ynm(ii,npts)=4.d0/3.d0*Ynm(ii,npts-1)-1.d0/3.d0*Ynm(ii,npts-2)     ! High Lat Boundary
       enddo
     else 
-      Ynm(:,Num_u1) = 0.d0           ! High Lat Boundary
+      Ynm(:,npts) = 0.d0           ! High Lat Boundary
     endif
 
 !   Normalise Basis Functions Numerically (using trapezoidal rule)
+!   Not really necessary for the fit
     do ii = 1,K
       do jj = 1 ,K
         End1 =(Ynm(ii,1)*sqrt(sin(theta(1))))*(Ynm(jj,1)*sqrt(sin(theta(1))))
-        End2 =(Ynm(ii,Num_u1)*sqrt(sin(theta(Num_u1))))*(Ynm(jj,Num_u1)*sqrt(sin(theta(Num_u1))))
+        End2 =(Ynm(ii,npts)*sqrt(sin(theta(npts))))*(Ynm(jj,npts)*sqrt(sin(theta(npts))))
         res=(2.0*Dot_Product(Ynm(ii,:)*sqrt(sin(theta(:))),Ynm(jj,:)*sqrt(sin(theta(:)))) - End1 - End2)*(dTh/2.0)
         ortho_n(ii,jj) = res
       enddo
     enddo
-
     do ii = 1,K
       Ynm(ii,:) = Ynm(ii,:)/sqrt(ortho_n(ii,ii))      ! Basis functions are now an orthonormal basis set
     enddo
 
+    deallocate (theta)
+
+!  Calculate the radial dependent term required for atmos solution
     do ii = 1,K
       RTerm_dr(ii) = zeros(ii)*RI_s**(zeros(ii)-1.0)*(1.0-(rE_s/RI_s)**(2.0*zeros(ii)+1.0))          ! Radial Derivative
-      RTerm(ii) = RI_s**zeros(ii) + (zeros(ii)/(zeros(ii)+1.0))*rE_s**(2.0*zeros(ii)+1.0)* &
-                  RI_s**(-(zeros(ii)+1.0))            ! Radial Term
       Ynm_S(ii,:) = Ynm(ii,:)*RTerm_dr(ii)
     enddo
+
+!  Scale back down to size of Num_u1
+    dTh = scaleup*dTh
+    do ii=1,K
+      kk=1
+      do jj=1,npts
+        if (mod(jj-1,scaleup).eq.0) then
+          Ynm_f(ii,kk) = Ynm(ii,jj)
+          Ynm_sf(ii,kk) = Ynm_s(ii,jj)
+          kk=kk+1
+        endif
+      enddo
+    enddo
+
+!do ii=1,K
+! do jj=1,num_u1
+!  write(14,*) Ynm_f(ii,jj),' ',Ynm_sf(ii,jj)
+! enddo
+!enddo
+!print*,'Stopped at end of basis routine'
+!stop
 
   end subroutine do_basis
 !
@@ -336,8 +365,8 @@ module mhd2d_grid
     implicit none
 
     integer, intent(in) :: Num_u1, Num_u1_2, Num_u3, Num_u3_2
-    real(DBL), intent(in) :: LMin_u1, LMax_u1, LMin_u3, LMax_u3
-    real(DBL), intent(inout) :: del_Th_0_u1, del_Th
+    real(DBL), intent(in) :: LMin_u1, LMax_u1, LMax_u3
+    real(DBL), intent(inout) :: del_Th_0_u1, del_Th, LMin_u3
 
     real(DBL), intent(inout), dimension(Num_u1) :: LVArr, CoLat_N, CoLat_S
     real(DBL), intent(inout), dimension(Num_u1,Num_u3) :: u1Arr, u3Arr, RArr, ThArr
@@ -349,7 +378,7 @@ module mhd2d_grid
 
     integer :: ii, jj
     real(DBL) :: CLat_Min_u1, CLat_Max_u1, CLat_Min_u3, CLat_Max_u3
-    real(DBL) :: del_Th_0_u3
+!    real(DBL) :: del_Th_0_u3
     real(DBL) :: CLat_0_u1, CLat_0r_u1, CLat_0_u3, CLat_0r_u3
     real(DBL) :: u1, u3, rg, ans, cos_th, sin_th, theta, lat, one_p_3cos_sq
 
@@ -359,15 +388,26 @@ module mhd2d_grid
     del_Th_0_u1=(CLat_Max_u1-CLat_Min_u1)/(Num_u1-1.d0)   ! del_Theta for u1 points
     del_Th = del_Th_0_u1*DegToRad                    ! del_Thet in radians
 
-    Print*,'Non-Orthogonal Grid Generation:'
-    Print*,'L_Value_Min, L_Value_Max, CLat_Min_u1, CLat_Max_u1 (Deg) : '
-    Print*, LMin_u1, LMax_u1, CLat_Min_u1, CLat_Max_u1
-    Print*,'Number of u1 Lines, Del_Theta_u1 : ',Num_u1, del_Th_0_u1
-
     CLat_Min_u3=asin(sqrt(RI_s/LMax_u3))*RadToDeg
-    CLat_Max_u3=asin(sqrt(RI_s/LMin_u3))*RadToDeg
-    del_Th_0_u3=(CLat_Max_u3-CLat_Min_u3)/(Num_u3_2-1.d0)
-    Print*,'Number of u3 Lines, Del_Theta_u3 : ',Num_u3, del_Th_0_u3
+    if (LMin_u3.lt.RI_s) then
+      LMin_u3=RI_s                ! Trap for asin > 1
+      CLat_Max_u3 = 90.0d0
+    else
+      CLat_Max_u3=asin(sqrt(RI_s/LMin_u3))*RadToDeg
+    endif
+!    del_Th_0_u3=(CLat_Max_u3-CLat_Min_u3)/(Num_u3_2-1.d0)
+
+    Print*,'LMin_u1 = ',LMin_u1
+    print*,'LMax_u1 = ',LMax_u1
+    print*,'CoLat_Min_u1 = ',CLat_Min_u1
+    print*,'CoLat_Max_u1 = ',CLat_Max_u1
+    Print*,'Number of field (u1) Lines = ',Num_u1
+    print*,'Number of points along field lines (u3) = ',Num_u3
+    print*,'LMin_u3=',LMin_u3
+    print*,'LMax_u3=',LMax_u3
+    print*,'CLat_Min_u3=',CLat_Min_u3
+    print*,'CLat_Max_u3=',CLat_Max_u3
+    print*,'del_Th=',del_Th
 
 !  u1 (L shell) Loop, Northern Hemisphere
     do jj=1,Num_u1                                 ! Starts at inner-most field line (i.e. smallest L)
@@ -375,6 +415,7 @@ module mhd2d_grid
       CLat_0r_u1=CLat_0_u1*DegToRad                ! Convert CLat_0 to radians
       u1=-sin(CLat_0r_u1)*sin(CLat_0r_u1)          ! Determine u1 (which is constant along an L shell) for this L value
       Colat_N(jj) = CLat_0r_u1
+      CoLat_S(jj) = pi-CLat_0r_u1
       u1Arr(jj,:)=u1
       LVArr(jj)=1.0/(cos(pi/2.0-CLat_0r_u1)**2)
       do ii=1, Num_u3_2
@@ -393,6 +434,7 @@ module mhd2d_grid
         Lat=pi/2.0-Theta
         xArr(jj,ii)=ans*cos(Lat)
         yArr(jj,ii)=ans*sin(Lat)
+
         g11_con(jj,ii)= (RI_s**2/ans**4)*sin_Th**2*one_p_3cos_sq
         g13_con(jj,ii)=-(RI_s**3/ans**5)*sin(CLat_0r_u1)**2*cos_Th*one_p_3cos_sq/(2.0*cos(CLat_0r_u1)**3)
         g22_con(jj,ii)=1.0/(ans**2*sin_Th**2)
@@ -418,6 +460,7 @@ module mhd2d_grid
         Lat=(pi/2.0-Theta)
         xArr(jj,Num_u3-ii+1)=ans*cos(Lat)
         yArr(jj,Num_u3-ii+1)=ans*sin(Lat)
+
         cos_Th=cos(Theta)
         one_p_3cos_sq=1.0+3.0*cos_Th*cos_Th
         sin_Th=sin(Theta)
@@ -440,22 +483,22 @@ module mhd2d_grid
       enddo
     enddo
 !
+    Lat=0.0
+    ans=0.0
 !  Do Equator, located at Num_u3_2 position
     do jj=1,Num_u1
       CLat_0_u1=CLat_Max_u1-(jj-1.0)*del_Th_0_u1            ! Co_Lat at Nth hemisphere Ionosphere (in degrees)
       CLat_0r_u1=CLat_0_u1*DegToRad                         ! Convert CLat_0 to radians
       ThArr(jj,Num_u3_2+1)=pi/2.0
-      xArr(jj,Num_u3_2+1)=RI_s/sin(CLat_0r_u1)**2
-      yArr(jj,Num_u3_2+1)=0.0d0
-      RArr(jj,Num_u3_2+1)=RI_s/sin(CLat_0r_u1)**2
+      xArr(jj,Num_u3_2+1) =RI_s/sin(CLat_0r_u1)**2
+      yArr(jj,Num_u3_2+1) =0.0d0
+      RArr(jj,Num_u3_2+1) =RI_s/sin(CLat_0r_u1)**2
       u1Arr(jj,Num_u3_2+1)=-sin(CLat_0r_u1)**2
+
 ! u3 should all be zero along the equator
-      Theta=pi/2.0                      ! Change Theta here for Equator
-      ThArr(jj,Num_u3_2+1)=Theta
-      Lat = 0.0d0
-      cos_Th=cos(Theta)
-      one_p_3cos_sq=1.0+3.0*cos_Th*cos_Th
-      sin_Th=sin(Theta)
+      cos_Th=0.0d0
+      one_p_3cos_sq = 1.d0
+      sin_Th = 1.d0
       ans = Rarr(jj,Num_u3_2+1)
       g11_con(jj,Num_u3_2+1)=(RI_s**2/ans**4)*sin_Th**2*one_p_3cos_sq
       g13_con(jj,Num_u3_2+1)=-(RI_S**3/ans**5)*sin(CLat_0r_u1)**2*cos_Th*one_p_3cos_sq/(2.0*cos(CLat_0r_u1)**3)
