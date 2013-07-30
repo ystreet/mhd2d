@@ -9,7 +9,7 @@ mod_dir="$base_pth"
 #echo " mod_dir = $mod_dir"
 src_dir="$base_pth"
 #echo " src dir = $src_dir"
-debug_opts="-g -traceback -check bounds"
+debug_opts="-openmp -O3 -xhost"
 
 # Lapack
 f95_lapack_dir="/opt/intel/Compiler/11.1/073/mkl/lib/em64t"

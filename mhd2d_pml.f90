@@ -116,7 +116,8 @@
                                                Thi_gnd_S, DThi_dr_S, &
                                                Coeffs_B3_N, Coeffs_B3_S
     character(len=100) :: out_dir, mk_out_dir, out_file
-    real :: t1, t2, t3
+    real :: clock_rate
+    integer :: t1, t2, t3, cr
 
 ! - - - - - - - - - start of code - - - - - - - - - - -
 
@@ -124,13 +125,13 @@
     m_num = 2.0
 
 ! Number of iterations
-    Nt = 400000
+    Nt = 1000
     use_va_file = 0        ! 1=constant ionos conductance
 ! dt time step
-    dt = 0.00005
+    dt = 0.0000001
 
 ! Output data dir
-    out_dir='/data/mhd2d/output'
+    out_dir='/home/mdw/mhd2d/output'
 
     if (use_va_file.eq.1) then
 ! Parameters for run - to come from file
@@ -142,8 +143,8 @@
       read(10,*) f107,f107a,ap
       read(10,*) LMin_u1, LMax_u1, LMin_u3,LMax_u3
     else
-      Num_u1 = 210
-      Num_u3 = 151
+      Num_u1 = 900
+      Num_u3 = 900
       LMin_u1 = 1.2d0
       LMax_u1 = 15.0d0
       LMin_u3 = RI_s
@@ -172,6 +173,9 @@
     nO_Ht = 250.0d3/rE_m   ! scale height of oxygen
   
 ! - - - - - end parameters - - - - -
+
+    call system_clock(count_rate=cr)
+    clock_rate = REAL(cr)
 
 ! Check grid size and numbers
     Num_u1_2 = int(Num_u1/2.0)
@@ -800,10 +804,13 @@
 ! ----------------------------------------------------
 !              Start Time Iteration Loop
 ! ----------------------------------------------------
-  print*,'Start time iteration loop...'
+  print*,'Start time iteration loop (', Nt, 'iterations)...'
   count1 = 0
+
+  call system_clock(t1)
+
   do tcnt = 1,Nt-1                          ! Start of time iteration loop
-    call cpu_time(t1)
+!    call system_clock(t1)
 
     tt = tcnt-1
     time = 2.d0*Dt*tt                     ! Time counter
@@ -843,10 +850,31 @@
 !        (B2_cov(:,S3R(:))-B2_cov(:,S3L(:)))/D_u3) + E1_con
 !    E2_con = 2.d0*dt*V2/Jacb*((B1_cov(:,S3R(:)) - B1_cov(:,S3L(:)))/ &
 !        D_u3 - (B3_cov(S1R(:),:)-B3_cov(S1L(:),:))/D_u1) + E2_con
-    E1_con = NuE1*emult*(im*m_num*B3_cov - &
-        (B2_cov(:,S3L(:))-B2_cov(:,S3R(:)))/D_u3) + NuE12*E1_con
-    E2_con = NuE2*emult*((B1_cov(:,S3L(:)) - B1_cov(:,S3R(:)))/ &
-         D_u3 - (B3_cov(S1L(:),:)-B3_cov(S1R(:),:))/D_u1) + NuE22*E2_con
+    !$omp parallel do
+!    do ii = 1,Num_u1
+!      E1_con(ii,:) = NuE1(ii,:) * emult(ii,:) * (im * m_num * B3_cov(ii,:) - &
+!          (B2_cov(ii,S3L(:)) - B2_cov(ii,S3R(:))) / D_u3(ii,:)) + &
+!          NuE12(ii,:) * E1_con(ii,:)
+!    enddo
+    do ii = 1,Num_u3
+      E1_con(:,ii) = NuE1(:,ii) * emult(:,ii) * (im * m_num * B3_cov(:,ii) - &
+          (B2_cov(:,S3L(ii)) - B2_cov(:,S3R(ii))) / D_u3(:,ii)) + &
+          NuE12(:,ii) * E1_con(:,ii)
+    enddo
+    !$omp end parallel do
+
+    !$omp parallel do
+!    do ii = 1,Num_u1
+!      E2_con(ii,:) = NuE2(ii,:) * emult(ii,:) * ((B1_cov(ii,S3L(:)) - &
+!          B1_cov(ii,S3R(:))) / D_u3(ii,:) - (B3_cov(S1L(ii),:) - &
+!          B3_cov(S1R(ii),:)) / D_u1(ii,:)) + NuE22(ii,:) * E2_con(ii,:)
+!    enddo
+    do ii = 1,Num_u3
+      E2_con(:,ii) = NuE2(:,ii) * emult(:,ii) * ((B1_cov(:,S3L(ii)) - &
+          B1_cov(:,S3R(ii))) / D_u3(:,ii) - (B3_cov(S1L(:),ii) - &
+          B3_cov(S1R(:),ii)) / D_u1(:,ii)) + NuE22(:,ii) * E2_con(:,ii)
+    enddo
+    !$omp end parallel do
 
 !   Evolve Contravariant (Tangent) vector fields to Covariant vectors fields
     E1_cov = E1_con/g11_con
@@ -880,12 +908,38 @@
 !         D_u3)+B2_con
 !    B3_con = 2.d0*dt/Jacb*(im*m_num*E1_cov-(E2_cov(S1R(:),:)- &
 !         E2_cov(S1L(:),:))/D_u1) + B3_con
-    B1_con = NuB1*bmult*((E2_cov(:,S3L(:))-E2_cov(:,S3R(:)))/ &
-         D_u3) + NuB12*B1_con
-    B2_con = -NuB2*bmult*((E1_cov(:,S3L(:))-E1_cov(:,S3R(:)))/ &
-         D_u3) + NuB22*B2_con
-    B3_con = NuB3*bmult*(im*m_num*E1_cov-(E2_cov(S1L(:),:)- &
-         E2_cov(S1R(:),:))/D_u1) + NuB32*B3_con
+    !$omp parallel do
+!    do ii = 1, Num_u1
+!      B1_con(ii,:) = NuB1(ii,:) * bmult(ii,:) * ((E2_cov(ii,S3L(:)) - E2_cov(ii,S3R(:))) / &
+!         D_u3(ii,:)) + NuB12(ii,:) * B1_con(ii,:)
+!    enddo
+    do ii = 1, Num_u3
+      B1_con(:,ii) = NuB1(:,ii) * bmult(:,ii) * ((E2_cov(:,S3L(ii)) - E2_cov(:,S3R(ii))) / &
+         D_u3(:,ii)) + NuB12(:,ii) * B1_con(:,ii)
+    enddo
+    !$omp end parallel do
+
+    !$omp parallel do
+!    do ii = 1, Num_u1
+!      B2_con(ii,:) = -NuB2(ii,:) * bmult(ii,:) * ((E1_cov(ii,S3L(:)) - E1_cov(ii,S3R(:))) / &
+!         D_u3(ii,:)) + NuB22(ii,:) * B2_con(ii,:)
+!    enddo
+    do ii = 1, Num_u3
+      B2_con(:,ii) = -NuB2(:,ii) * bmult(:,ii) * ((E1_cov(:,S3L(ii)) - E1_cov(:,S3R(ii))) / &
+         D_u3(:,ii)) + NuB22(:,ii) * B2_con(:,ii)
+    enddo
+    !$omp end parallel do
+
+    !$omp parallel do
+!    do ii = 1, Num_u1
+!      B3_con(ii,:) = NuB3(ii,:) * bmult(ii,:) * (im * m_num * E1_cov(ii,:) - (E2_cov(S1L(ii),:) - &
+!         E2_cov(S1R(ii),:)) / D_u1(ii,:)) + NuB32(ii,:) * B3_con(ii,:)
+!    enddo
+    do ii = 1, Num_u3
+      B3_con(:,ii) = NuB3(:,ii) * bmult(:,ii) * (im * m_num * E1_cov(:,ii) - (E2_cov(S1L(:),ii) - &
+         E2_cov(S1R(:),ii)) / D_u1(:,ii)) + NuB32(:,ii) * B3_con(:,ii)
+    enddo
+    !$omp end parallel do
 
 !  Outer Corner Point Ionopshere and Outer L shell
 !  Set 1st deriv=0, assuming basis expansion has 1st derv=0 functions
@@ -941,9 +995,9 @@
 !   Along Outer L shell Boundary
     B3_cov(Num_u1,:) = 0.0d0    ! should be zero after PML
 
-    call cpu_time (t2)
+!    call system_clock (t2)
 
-    print*, "prelims: ", (t2-t1), "s"
+!    print*, "prelims: ", (t2-t1)/clock_rate, "s"
 
 ! Ionosphere Boundary Condition
 !  Using B3_con in the ionosphere and perfectly conducting ground (B3_con = 0)
@@ -1041,9 +1095,9 @@
     DThi_dTh_N_g = 1.d0/RI_s*DThi_dTh_N_g                                ! B_Theta Ground
     DThi_dPh_N_g = Cmplx(0.0,1.d0)*m_num*Thi_gnd_N / (Re_s*sin(Colat_N)) !B_phi Ground
 
-    call cpu_time(t3)
+!    call system_clock(t3)
 
-    print*, "Northern Hemisphere: ", (t3-t1), "s"
+!    print*, "Northern Hemisphere: ", (t3-t2)/clock_rate, "s"
 
 !  SOUTHERN HEMISPHERE
 !   Linear Interpolation
@@ -1141,13 +1195,17 @@
     DThi_dTh_S_g = 1.d0 / RI_s * DThi_dTh_S_g                           ! B_Theta Ground
     DThi_dPh_S_g = Cmplx(0.0, 1.d0)*m_num*Thi_gnd_S/(Re_s*sin(Colat_S)) ! B_phi Ground
 
-    call cpu_time(t2)
-
-    print*, "Southern Hemisphere: ", (t2-t3), "s"
+!    call system_clock(t2)
+!    print*, "Loop time: ", (t2-t1)/clock_rate, "s"
+!    print*, "Southern Hemisphere: ", (t2-t3)/clock_rate, "s"
 
 ! =================================================
 ! Output data arrays
     If (mod(tcnt,plot_freq) == 0) then
+      call system_clock(t2)
+      print*, "Loop time: ", (t2-t1)/clock_rate, "s for ", plot_freq, &
+          " loops, ", (Nt - tcnt) * (t2 - t1) / plot_freq / clock_rate, &
+          "s to go"
       do ii=1,Num_u1_2
         do jj=1,Num_u3_2
           b_nu_a(ii,jj) = 1.0e9*h_nu(2*ii-1,2*jj  )*B1_con(2*ii-1,2*jj  )/Re_m
@@ -1187,14 +1245,18 @@
       write(1) b_nu_a, b_ph_a, b_mu_a, e_nu_a, e_ph_a
       close(unit=1)
 
-      print*,'count and bfa(nT) = ',count1,' ',bfa*1.d9
-      print*,'Max of abs(bmu) = ',maxval(abs(b_mu_a))
+!      print*,'count and bfa(nT) = ',count1,' ',bfa*1.d9
+!      print*,'Max of abs(bmu) = ',maxval(abs(b_mu_a))
+
+      call system_clock(t1)
 !stop
     endif       ! if outout arrays
 
   enddo  ! ============== End of Time Loop ====================
 
-  print*,'Finished'
+  call system_clock(t2)
+
+  print*, "Finished ", (t2-t1)/clock_rate, "s"
 
 end 
 
